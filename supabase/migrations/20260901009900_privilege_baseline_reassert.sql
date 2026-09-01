@@ -44,13 +44,19 @@ DECLARE
   v_table_grants   integer;
   v_extra_routines integer;
 BEGIN
+  -- Scoped to the schemas this project owns. Supabase legitimately grants anon
+  -- SELECT on realtime.messages (channel authorisation is done by RLS on that
+  -- table), and storage has its own platform-managed grants; neither is ours to
+  -- assert on.
   SELECT count(*) INTO v_table_grants
   FROM information_schema.role_table_grants
-  WHERE grantee = 'anon';
+  WHERE grantee = 'anon'
+    AND table_schema IN ('public', 'app_private');
 
   IF v_table_grants > 0 THEN
     RAISE EXCEPTION
-      'privilege baseline violated: anon holds % table privilege(s); expected 0', v_table_grants
+      'privilege baseline violated: anon holds % table privilege(s) in public/app_private; expected 0',
+      v_table_grants
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 
