@@ -32,6 +32,15 @@
 -- migrations would prove nothing: that connection is exempt from every guard by
 -- design.
 --
+-- KNOWN-OPEN FINDING (this file currently exits non-zero)
+-- --------------------------------------------------------
+-- Cases 4j and 4l FAIL. They are not broken tests: a MANAGER can neutralise a
+-- restaurant's last RESTAURANT_OWNER by flipping public.profiles.is_active on
+-- the owner's row, which no guard inspects because trg_profiles_guard only
+-- protects that column on the caller's OWN row. See §7 for the full reasoning
+-- and the exact statements. The exploit is closed by a migration, not by
+-- editing this file; until then this test is meant to be red.
+--
 -- WHY EVERY CASE IS ROLLED BACK
 -- -----------------------------
 -- Each attempt runs inside a plpgsql BEGIN ... EXCEPTION block, which is a
@@ -46,11 +55,26 @@
 --     RLS     — 42501 "new row violates row-level security policy", or an
 --               UPDATE/DELETE that matched 0 rows
 --     TRIGGER — PT403/PT409 QR0xx from a §3.18 guard trigger
--- Six cases are run twice: once as the wire sees them, and once with the
+-- Nine cases are run twice: once as the wire sees them, and once with the
 -- missing column privilege temporarily GRANTed inside the savepoint, which
 -- strips the ACL layer away and forces the guard trigger to answer on its own.
 -- That is what turns "refused" into "refused in depth", and it is the only way
 -- to notice that one of two layers has quietly stopped working.
+--
+-- CASE MAP
+-- --------
+--   P1-P6   positive controls: legitimate work that must keep working, and
+--           proof that every fixture row is reachable by the attacking role
+--   1a-1e   a KITCHEN account sets its own profiles.is_platform_admin      (F05)
+--   2a-2d   a MANAGER INSERTs a staff row making itself RESTAURANT_OWNER   (F06)
+--   3a-3f   a MANAGER promotes its own staff.role                          (F06)
+--   4a-4m   deleting, demoting or neutralising the last RESTAURANT_OWNER   (F06)
+--   5a-5h   a KITCHEN account rewrites menu_items.price / name / category  (F09)
+--   6a-6b   the kitchen 86-ing a dish - MUST STILL SUCCEED                 (F09)
+--   7a-7j   staff rewrite order money and order identity                   (F07)
+--   8a-8f   a MANAGER writes tables.qr_token or resets the cooldown clocks (F13)
+--   9a-9d   any staff member rewrites notifications.payload / type         (F11)
+--   I1-I12  persisted-state invariants, read back as superuser at the end
 --
 -- IDEMPOTENCY AND CLEANUP
 -- -----------------------
@@ -107,13 +131,16 @@ BEGIN
   ALTER TABLE public.qr_token_history     DISABLE TRIGGER trg_qr_token_history_immutable;
   BEGIN
     DELETE FROM public.order_status_history
-      WHERE restaurant_id = '7e57a000-0000-4000-8000-000000000001';
+      WHERE restaurant_id IN ('7e57a000-0000-4000-8000-000000000001',
+                              '7e57a000-0000-4000-8000-00000000000b');
     DELETE FROM public.qr_token_history
-      WHERE restaurant_id = '7e57a000-0000-4000-8000-000000000001';
+      WHERE restaurant_id IN ('7e57a000-0000-4000-8000-000000000001',
+                              '7e57a000-0000-4000-8000-00000000000b');
     -- orders before branches: fk_orders_branch is ON DELETE RESTRICT.
     DELETE FROM public.orders
-      WHERE restaurant_id = '7e57a000-0000-4000-8000-000000000001';
-    DELETE FROM public.restaurants WHERE slug = 'qros-privesc-a';
+      WHERE restaurant_id IN ('7e57a000-0000-4000-8000-000000000001',
+                              '7e57a000-0000-4000-8000-00000000000b');
+    DELETE FROM public.restaurants WHERE slug IN ('qros-privesc-a', 'qros-privesc-b');
     DELETE FROM auth.users         WHERE email LIKE '%@qros-priv-esc.test';
   EXCEPTION WHEN OTHERS THEN
     ALTER TABLE public.order_status_history ENABLE TRIGGER trg_order_status_history_immutable;
@@ -154,7 +181,8 @@ INSERT INTO auth.users (id, email) VALUES
   ('7e57c000-0000-4000-8000-000000000002', 'manager@qros-priv-esc.test'),
   ('7e57c000-0000-4000-8000-000000000003', 'waiter@qros-priv-esc.test'),
   ('7e57c000-0000-4000-8000-000000000004', 'kitchen@qros-priv-esc.test'),
-  ('7e57c000-0000-4000-8000-000000000005', 'accomplice@qros-priv-esc.test');
+  ('7e57c000-0000-4000-8000-000000000005', 'accomplice@qros-priv-esc.test'),
+  ('7e57c000-0000-4000-8000-0000000000b2', 'rival-manager@qros-priv-esc.test');
 
 -- handle_new_auth_user() swallows every error into a WARNING (F04's fix), so a
 -- missing profile would silently turn every case below into a vacuous pass.
@@ -163,8 +191,8 @@ DECLARE v_n integer;
 BEGIN
   SELECT count(*) INTO v_n FROM public.profiles
   WHERE id::text LIKE '7e57c000-0000-4000-8000-%';
-  IF v_n <> 5 THEN
-    RAISE EXCEPTION 'fixture: expected 5 profiles from handle_new_auth_user(), got % - the rest of this file would test nothing', v_n;
+  IF v_n <> 6 THEN
+    RAISE EXCEPTION 'fixture: expected 6 profiles from handle_new_auth_user(), got % - the rest of this file would test nothing', v_n;
   END IF;
 END;
 $$;
@@ -178,6 +206,23 @@ INSERT INTO public.staff (id, restaurant_id, branch_id, profile_id, role) VALUES
    '7e57b000-0000-4000-8000-000000000001', '7e57c000-0000-4000-8000-000000000003', 'WAITER'),
   ('7e57d000-0000-4000-8000-000000000004', '7e57a000-0000-4000-8000-000000000001',
    '7e57b000-0000-4000-8000-000000000001', '7e57c000-0000-4000-8000-000000000004', 'KITCHEN');
+
+-- A SECOND, UNRELATED TENANT. profiles.is_active is a single global boolean and
+-- can_manage_staff_of_user() is satisfied by ANY shared restaurant, so a second
+-- tenant is the only way to test whether authority over a person is scoped to
+-- the tenant that employs them. Tenant A's OWNER moonlights as a WAITER here.
+INSERT INTO public.restaurants (id, name, slug)
+VALUES ('7e57a000-0000-4000-8000-00000000000b', 'PrivEsc Rival', 'qros-privesc-b');
+
+INSERT INTO public.branches (id, restaurant_id, name, code)
+VALUES ('7e57b000-0000-4000-8000-00000000000b',
+        '7e57a000-0000-4000-8000-00000000000b', 'Rival Main', 'A');
+
+INSERT INTO public.staff (id, restaurant_id, branch_id, profile_id, role) VALUES
+  ('7e57d000-0000-4000-8000-0000000000b2', '7e57a000-0000-4000-8000-00000000000b',
+   '7e57b000-0000-4000-8000-00000000000b', '7e57c000-0000-4000-8000-0000000000b2', 'MANAGER'),
+  ('7e57d000-0000-4000-8000-0000000000b3', '7e57a000-0000-4000-8000-00000000000b',
+   '7e57b000-0000-4000-8000-00000000000b', '7e57c000-0000-4000-8000-000000000001', 'WAITER');
 
 INSERT INTO public.tables (id, restaurant_id, branch_id, number, qr_token,
                            last_order_at, last_waiter_call_at)
@@ -253,8 +298,29 @@ CREATE TEMP TABLE pg_temp.qros_pe_results (
   status     text NOT NULL,          -- 'PASS' | 'FAIL'
   defence    text,                   -- GRANT | RLS | TRIGGER | none
   detail     text,
+  actor      text,                   -- which fixture account issued it
   statement  text NOT NULL
 );
+
+-- Maps a fixture profile id back to a readable role, so a FAIL report names the
+-- attacker rather than a UUID.
+CREATE OR REPLACE FUNCTION pg_temp.qros_pe_actor(p_uid uuid)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $fn$
+  SELECT CASE p_uid::text
+    WHEN '7e57c000-0000-4000-8000-000000000001' THEN 'tenant A RESTAURANT_OWNER'
+    WHEN '7e57c000-0000-4000-8000-000000000002' THEN 'tenant A MANAGER'
+    WHEN '7e57c000-0000-4000-8000-000000000003' THEN 'tenant A WAITER'
+    WHEN '7e57c000-0000-4000-8000-000000000004' THEN 'tenant A KITCHEN'
+    WHEN '7e57c000-0000-4000-8000-000000000005' THEN 'tenant A unaffiliated profile'
+    WHEN '7e57c000-0000-4000-8000-0000000000b2' THEN 'tenant B (rival) MANAGER'
+    ELSE p_uid::text END;
+$fn$;
 
 -- Classify a refusal by the layer that produced it. This is what makes a
 -- silently-removed guard trigger visible even while the column ACL still holds.
@@ -380,8 +446,9 @@ BEGIN
   END;
 
   INSERT INTO pg_temp.qros_pe_results
-    (case_id, label, expected, status, defence, detail, statement)
+    (case_id, label, expected, status, defence, detail, actor, statement)
   VALUES (p_case_id, p_label, p_expect, v_status, v_defence, v_detail,
+          pg_temp.qros_pe_actor(p_uid),
           regexp_replace(p_sql, '\s+', ' ', 'g'));
 
   RAISE NOTICE '% % % [%] %',
@@ -411,8 +478,8 @@ BEGIN
     v_detail := 'invariant query failed: ' || v_detail;
   END;
   INSERT INTO pg_temp.qros_pe_results
-    (case_id, label, expected, status, defence, detail, statement)
-  VALUES (p_case_id, p_label, 'invariant', v_status, 'n/a', v_detail,
+    (case_id, label, expected, status, defence, detail, actor, statement)
+  VALUES (p_case_id, p_label, 'invariant', v_status, 'n/a', v_detail, 'superuser',
           regexp_replace(p_sql, '\s+', ' ', 'g'));
   RAISE NOTICE '% % % [%] %',
     rpad(v_status, 4), rpad(p_case_id, 5), rpad(p_label, 58), 'inv', v_detail;
@@ -473,14 +540,22 @@ BEGIN
     $w$SELECT name = 'Terrace 1' AND qr_token = 'PrivEscFixtureTokenAAAAA'
        FROM public.tables WHERE id = '7e57e000-0000-4000-8000-000000000001'$w$);
 
+  -- Read path, not a write: notifications carries no UPDATE grant at all, so the
+  -- only way to know case 9's target row is genuinely visible to the attacker
+  -- (and that 9a-9d are therefore refusing a reachable row) is to read it.
   PERFORM pg_temp.qros_pe_case('P5',
-    'KITCHEN can read the broadcast notification (read path alive)',
+    'KITCHEN can READ the broadcast notification it may not write',
     '7e57c000-0000-4000-8000-000000000004',
-    $q$CREATE TEMP TABLE qros_pe_seen AS
-       SELECT id FROM public.notifications
+    $q$SELECT id FROM public.notifications
        WHERE id = '7e573000-0000-4000-8000-000000000001'$q$,
-    'allowed',
-    $w$SELECT count(*) = 1 FROM qros_pe_seen$w$);
+    'allowed');
+
+  PERFORM pg_temp.qros_pe_case('P6',
+    'the tenant-A OWNER is a WAITER at the rival tenant (fixture sanity)',
+    '7e57c000-0000-4000-8000-000000000001',
+    $q$SELECT id FROM public.staff
+       WHERE id = '7e57d000-0000-4000-8000-0000000000b3'$q$,
+    'allowed');
 END;
 $$;
 
@@ -603,6 +678,20 @@ BEGIN
     '7e57c000-0000-4000-8000-000000000002',
     $q$UPDATE public.staff SET profile_id = '7e57c000-0000-4000-8000-000000000005'
        WHERE id = '7e57d000-0000-4000-8000-000000000003'$q$);
+
+  PERFORM pg_temp.qros_pe_case('3e',
+    'F06 MANAGER repoints a staff row with profile_id GRANTed',
+    '7e57c000-0000-4000-8000-000000000002',
+    $q$UPDATE public.staff SET profile_id = '7e57c000-0000-4000-8000-000000000005'
+       WHERE id = '7e57d000-0000-4000-8000-000000000003'$q$,
+    'refused', NULL,
+    $s$GRANT UPDATE (profile_id, restaurant_id) ON public.staff TO authenticated$s$);
+
+  PERFORM pg_temp.qros_pe_case('3f',
+    'F06 MANAGER edits its own membership at all (self-modification)',
+    '7e57c000-0000-4000-8000-000000000002',
+    $q$UPDATE public.staff SET permissions = '{"staff":true,"settings":true}'
+       WHERE id = '7e57d000-0000-4000-8000-000000000002'$q$);
 END;
 $$;
 
@@ -678,6 +767,78 @@ BEGIN
        WHERE id = '7e57d000-0000-4000-8000-000000000001'$q$,
     'refused', NULL,
     $s$GRANT UPDATE ON public.staff TO authenticated$s$);
+
+  -- ---------------------------------------------------------------------------
+  -- 4j / 4k / 4l — the same objective through public.profiles instead of
+  -- public.staff.
+  --
+  -- Everything above defends public.staff: trg_staff_guard's rank rule (QR055)
+  -- stops a MANAGER touching an owner's membership from any direction, and the
+  -- self-modification rule (QR056) stops an owner dismantling their own. But
+  -- "who is a RESTAURANT_OWNER" is not answered by public.staff alone.
+  -- public.auth_role_in_restaurant() reads
+  --
+  --     FROM public.staff s JOIN public.profiles p ON p.id = s.profile_id
+  --     WHERE ... AND s.is_active AND p.is_active
+  --
+  -- so profiles.is_active is the SECOND switch on every membership, and it is
+  -- a column authenticated holds UPDATE on (20260901001200's narrowed grant
+  -- keeps is_active writable), addressable through profiles_update_manager,
+  -- whose USING is can_manage_staff_of_user(id) — true for any MANAGER who
+  -- shares a restaurant with the target. trg_profiles_guard rule 3 refuses an
+  -- is_active flip only when OLD.id = auth.uid(), i.e. only on YOUR OWN row.
+  --
+  -- Nothing anywhere compares the actor's rank to the target's.
+  -- ---------------------------------------------------------------------------
+  PERFORM pg_temp.qros_pe_case('4j',
+    'F06 MANAGER suspends the last owner via profiles.is_active',
+    '7e57c000-0000-4000-8000-000000000002',
+    $q$UPDATE public.profiles SET is_active = false
+       WHERE id = '7e57c000-0000-4000-8000-000000000001'$q$,
+    'refused',
+    -- Witness, evaluated inside the savepoint: the staff row still declares an
+    -- active RESTAURANT_OWNER while the human behind it is switched off, which
+    -- is exactly the "tenant with no owner" state QR051_LAST_OWNER exists to
+    -- prevent.
+    $w$SELECT NOT p.is_active
+              AND EXISTS (SELECT 1 FROM public.staff s
+                          WHERE s.profile_id = p.id
+                            AND s.restaurant_id = '7e57a000-0000-4000-8000-000000000001'
+                            AND s.role = 'RESTAURANT_OWNER' AND s.is_active)
+       FROM public.profiles p WHERE p.id = '7e57c000-0000-4000-8000-000000000001'$w$);
+
+  -- Aggravating factor, not good news: this PASSes, and that is the problem.
+  -- The victim cannot undo it, because rule 3 of trg_profiles_guard blocks an
+  -- is_active change on your own row. The lockout is one-way from inside the
+  -- tenant; only a platform admin, service_role, or the very manager who did it
+  -- can reverse it.
+  PERFORM pg_temp.qros_pe_case('4k',
+    'F06 the suspended OWNER cannot re-activate itself (one-way lockout)',
+    '7e57c000-0000-4000-8000-000000000001',
+    $q$UPDATE public.profiles SET is_active = false
+       WHERE id = '7e57c000-0000-4000-8000-000000000001'$q$);
+
+  -- Cross-tenant amplification. The rival MANAGER employs the victim as a mere
+  -- WAITER in an unrelated restaurant; can_manage_staff_of_user() is an EXISTS
+  -- over ANY shared restaurant and profiles.is_active is global, so a manager
+  -- of the smallest tenant can switch off an owner of the largest.
+  PERFORM pg_temp.qros_pe_case('4l',
+    'F06 a RIVAL tenant MANAGER suspends tenant A''s owner globally',
+    '7e57c000-0000-4000-8000-0000000000b2',
+    $q$UPDATE public.profiles SET is_active = false
+       WHERE id = '7e57c000-0000-4000-8000-000000000001'$q$,
+    'refused',
+    $w$SELECT NOT is_active FROM public.profiles
+       WHERE id = '7e57c000-0000-4000-8000-000000000001'$w$);
+
+  -- Tenancy control: the same rival manager has no reach into tenant A's data.
+  -- It passes, which is what makes 4l's failure a scoping defect in the
+  -- person-level switch specifically, not a broken tenant boundary in general.
+  PERFORM pg_temp.qros_pe_case('4m',
+    'the rival MANAGER cannot touch tenant A''s menu (tenancy control)',
+    '7e57c000-0000-4000-8000-0000000000b2',
+    $q$UPDATE public.menu_items SET price = 1
+       WHERE id = '7e570000-0000-4000-8000-000000000001'$q$);
 END;
 $$;
 
@@ -1049,6 +1210,18 @@ BEGIN
               AND target_role = 'KITCHEN'
        FROM public.notifications WHERE id = '7e573000-0000-4000-8000-000000000001'$i$);
 
+  PERFORM pg_temp.qros_pe_invariant('I11',
+    'the tenant still has one FUNCTIONING owner (staff row AND live person)',
+    $i$SELECT count(*) = 1
+       FROM public.staff s JOIN public.profiles p ON p.id = s.profile_id
+       WHERE s.restaurant_id = '7e57a000-0000-4000-8000-000000000001'
+         AND s.role = 'RESTAURANT_OWNER' AND s.is_active AND p.is_active$i$);
+
+  PERFORM pg_temp.qros_pe_invariant('I12',
+    'the rival tenant is untouched',
+    $i$SELECT count(*) = 2 FROM public.staff
+       WHERE restaurant_id = '7e57a000-0000-4000-8000-00000000000b'$i$);
+
   PERFORM pg_temp.qros_pe_invariant('I10',
     'no column GRANT widened by a defence-in-depth case leaked out',
     $i$SELECT NOT has_column_privilege('authenticated', 'public.profiles',
@@ -1064,7 +1237,7 @@ $$;
 -- §14. Summary
 -- =============================================================================
 \echo ''
-SELECT case_id, status, defence, label, detail
+SELECT case_id, status, defence, actor, label, detail
 FROM pg_temp.qros_pe_results
 ORDER BY seq;
 
@@ -1080,7 +1253,6 @@ ORDER BY status;
 -- §15. Teardown — the file leaves the database exactly as it found it.
 --      Runs BEFORE the verdict so a failing run still cleans up.
 -- =============================================================================
-DROP TABLE IF EXISTS pg_temp.qros_pe_seen;
 SELECT pg_temp.qros_pe_teardown();
 
 DO $$
@@ -1110,15 +1282,20 @@ BEGIN
   FROM pg_temp.qros_pe_results;
 
   IF v_fail > 0 THEN
-    SELECT string_agg(format(E'\n  [%s] %s\n      %s\n      %s',
-                             case_id, label, detail, statement), '')
+    SELECT string_agg(format(E'\n  [%s] %s\n      %s\n      as %s: %s',
+                             case_id, label, detail, actor, statement), '')
       INTO v_report
     FROM pg_temp.qros_pe_results WHERE status = 'FAIL';
 
     RAISE EXCEPTION
-      '01-privilege-escalation: % of % cases FAILED%',
+      E'01-privilege-escalation: % of % cases FAILED%',
       v_fail, v_fail + v_pass, v_report
-      USING HINT = 'A FAIL on an exploit case means the statement shown was accepted by the database. A FAIL on a positive control means a legitimate operation is now blocked.';
+      USING HINT =
+        'A FAIL on an exploit case means the statement shown was ACCEPTED: the exploit is open, '
+        'and the fix belongs in a migration, not in this file. A FAIL on a positive control (P*) '
+        'or an invariant (I*) means the opposite - a defence has become too broad and is now '
+        'breaking legitimate use, or a case leaked state past its savepoint. '
+        'Do not silence a case here to make the chain green.';
   END IF;
 
   RAISE NOTICE '';

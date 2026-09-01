@@ -201,7 +201,7 @@ export async function listMenuItems(
 
     let query = supabase
       .from('menu_items')
-      .select('*, menu_categories(name)')
+      .select('*')
       .is('deleted_at', null)
       .order('sort_order', { ascending: true })
 
@@ -213,9 +213,8 @@ export async function listMenuItems(
     const { data, error } = await query
     if (error) throw new AppErrorException(mapPgError(error))
 
-    const rows = (data ?? []) as (MenuItemRow & {
-      menu_categories?: { name: I18nText } | null
-    })[]
+    const rows: MenuItemRow[] = data ?? []
+    const categoryNames = await readCategoryNames(supabase)
 
     // Search runs in memory rather than as a PostgREST filter: the term must
     // match ANY locale of name or description, and expressing that as a
@@ -230,7 +229,7 @@ export async function listMenuItems(
       .map((row): MenuItemAdminView => ({
         item: toMenuItemView(row),
         branchId: row.branch_id,
-        categoryName: row.menu_categories?.name ?? null,
+        categoryName: categoryNames.get(row.category_id) ?? null,
         unavailableUntil: row.unavailable_until,
         availableFrom: row.available_from,
         availableUntil: row.available_until,
@@ -240,31 +239,58 @@ export async function listMenuItems(
   })
 }
 
+/**
+ * Category names, keyed by id.
+ *
+ * A separate round trip rather than a PostgREST embed: `src/types/database.ts`
+ * declares `Relationships: []` for every table, so an embedded select does not
+ * type-check — and rather than cast the result to a shape TypeScript has no
+ * reason to believe, the join is done here, in memory, where it is visible.
+ */
+async function readCategoryNames(
+  supabase: Awaited<ReturnType<typeof createServerClient>>,
+): Promise<Map<string, I18nText>> {
+  const { data, error } = await supabase.from('menu_categories').select('id, name')
+  if (error) throw new AppErrorException(mapPgError(error))
+  return new Map((data ?? []).map((row) => [row.id, row.name]))
+}
+
 /** One dish with its option rows, for the edit form and the customer detail sheet. */
 export async function getMenuItem(id: string): Promise<Result<MenuItemAdminView>> {
   return toResult(async () => {
     await requireSession()
     const supabase = await createServerClient()
 
-    const { data, error } = await supabase
+    const { data: row, error } = await supabase
       .from('menu_items')
-      .select('*, menu_categories(name), menu_item_options(*)')
+      .select('*')
       .eq('id', id)
       .is('deleted_at', null)
       .maybeSingle()
 
     if (error) throw new AppErrorException(mapPgError(error))
-    if (!data) throw notFound('menu_item')
+    if (!row) throw notFound('menu_item')
 
-    const row = data as MenuItemRow & {
-      menu_categories?: { name: I18nText } | null
-      menu_item_options?: MenuItemOptionRow[] | null
-    }
+    const { data: optionRows, error: optionError } = await supabase
+      .from('menu_item_options')
+      .select('*')
+      .eq('menu_item_id', id)
+      .is('deleted_at', null)
+
+    if (optionError) throw new AppErrorException(mapPgError(optionError))
+
+    const { data: category, error: categoryError } = await supabase
+      .from('menu_categories')
+      .select('name')
+      .eq('id', row.category_id)
+      .maybeSingle()
+
+    if (categoryError) throw new AppErrorException(mapPgError(categoryError))
 
     return {
-      item: toMenuItemView(row, { optionRows: row.menu_item_options ?? [] }),
+      item: toMenuItemView(row, { optionRows: optionRows ?? [] }),
       branchId: row.branch_id,
-      categoryName: row.menu_categories?.name ?? null,
+      categoryName: category?.name ?? null,
       unavailableUntil: row.unavailable_until,
       availableFrom: row.available_from,
       availableUntil: row.available_until,
@@ -415,15 +441,9 @@ export async function deleteCategory(id: string): Promise<Result<null>> {
 /* Item writes                                                         */
 /* ------------------------------------------------------------------ */
 
-function optionInsert(
-  restaurantId: string,
-  menuItemId: string,
-  option: MenuItemOptionInput,
-) {
+/** The columns an option carries, minus the three the row type freezes on update. */
+function optionColumns(option: MenuItemOptionInput) {
   return {
-    ...(option.id ? { id: option.id } : {}),
-    restaurant_id: restaurantId,
-    menu_item_id: menuItemId,
     group_key: option.group_key,
     group_label: option.group_label,
     selection_type: option.selection_type,
@@ -436,6 +456,18 @@ function optionInsert(
     is_default: option.is_default,
     is_available: option.is_available,
     sort_order: option.sort_order,
+  }
+}
+
+function optionInsert(
+  restaurantId: string,
+  menuItemId: string,
+  option: MenuItemOptionInput,
+) {
+  return {
+    restaurant_id: restaurantId,
+    menu_item_id: menuItemId,
+    ...optionColumns(option),
   }
 }
 
@@ -554,17 +586,16 @@ export async function updateMenuItem(
     }
 
     for (const option of input.options) {
-      const payload = optionInsert(session.restaurantId, input.id, option)
       if (option.id) {
         const { error: updateError } = await supabase
           .from('menu_item_options')
-          .update(payload)
+          .update(optionColumns(option))
           .eq('id', option.id)
         if (updateError) throw new AppErrorException(mapPgError(updateError))
       } else {
         const { error: insertError } = await supabase
           .from('menu_item_options')
-          .insert(payload)
+          .insert(optionInsert(session.restaurantId, input.id, option))
         if (insertError) throw new AppErrorException(mapPgError(insertError))
       }
     }

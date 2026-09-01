@@ -40,3 +40,7 @@ supabase/.env
 # scratch probes written by tooling while diagnosing types/builds
 .probe-*
 *.probe.mjs
+
+# agent scratch probes
+__probe.ts
+**/__probe.*

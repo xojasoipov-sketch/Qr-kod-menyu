@@ -39,11 +39,15 @@
 -- PASS / FAIL / GAP
 --   FAIL  the database is more PERMISSIVE than the spec, or a documented
 --         guarantee does not hold. Fails the build.
---   GAP   the database is more RESTRICTIVE than the spec (it refuses something
---         §3.17 permits). Not a security hole, so it does not fail the build,
---         but it is printed loudly and enumerated in a hard-coded list below —
---         an undeclared restriction is a FAIL, and a GAP that has been fixed is
---         reported too, so the list cannot rot silently.
+--   GAP   a spec deviation that grants nobody anything through the product's
+--         real request shape: either the database REFUSING something §3.17
+--         permits, or a latent defect that PostgREST's one-transaction-per-
+--         request model currently makes unreachable. Every gap is declared and
+--         justified in writing at the point it is checked; an UNDECLARED
+--         deviation is a FAIL, and a declared gap that has since been closed is
+--         reported too, so the list cannot rot into a licence to fail.
+--         Gaps do not fail the build; they are printed in their own table and
+--         counted in the summary line.
 -- =============================================================================
 
 \set ON_ERROR_STOP on
@@ -93,6 +97,25 @@ BEGIN
     p_detail);
 END $fn$;
 
+-- PostgREST runs every request in its OWN transaction, so the request-scoped
+-- GUCs a SECURITY DEFINER function sets with set_config(..., is_local => true)
+-- die with that request. This suite runs the whole run in ONE transaction, so it
+-- has to clear them by hand between simulated requests — otherwise, for example,
+-- the app.actor_kind = 'customer' that public_place_order installs would still be
+-- in force when a waiter later touches the same order, and every assertion after
+-- the first guest order would be measuring the harness rather than the database.
+-- Part 10 asserts that leak explicitly rather than only papering over it.
+CREATE FUNCTION qros_t02.reset_request()
+RETURNS void LANGUAGE plpgsql AS $fn$
+BEGIN
+  PERFORM set_config('request.jwt.claims',  '', true);
+  PERFORM set_config('app.actor_kind',      '', true);
+  PERFORM set_config('app.actor_profile_id','', true);
+  PERFORM set_config('app.actor_role',      '', true);
+  PERFORM set_config('app.actor_note',      '', true);
+  PERFORM set_config('app.guard_bypass',    '', true);
+END $fn$;
+
 -- Impersonate a PostgREST request. p_dbrole NULL leaves the superuser session
 -- alone (fixture work); 'anon' / 'authenticated' switch role AND install the
 -- JWT claims that auth.uid() reads.
@@ -100,6 +123,7 @@ CREATE FUNCTION qros_t02.run_as(p_uid uuid, p_dbrole text, p_sql text)
 RETURNS integer LANGUAGE plpgsql AS $fn$
 DECLARE v_rows integer;
 BEGIN
+  PERFORM qros_t02.reset_request();
   IF p_dbrole IS NOT NULL THEN
     PERFORM set_config('request.jwt.claims',
       CASE WHEN p_uid IS NULL THEN ''
@@ -110,7 +134,7 @@ BEGIN
   EXECUTE p_sql;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RESET ROLE;
-  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM qros_t02.reset_request();
   RETURN v_rows;
 END $fn$;
 
@@ -170,6 +194,7 @@ CREATE FUNCTION qros_t02.call_json(p_uid uuid, p_dbrole text, p_sql text)
 RETURNS jsonb LANGUAGE plpgsql AS $fn$
 DECLARE v jsonb;
 BEGIN
+  PERFORM qros_t02.reset_request();
   IF p_dbrole IS NOT NULL THEN
     PERFORM set_config('request.jwt.claims',
       CASE WHEN p_uid IS NULL THEN ''
@@ -179,7 +204,7 @@ BEGIN
   END IF;
   EXECUTE p_sql INTO v;
   RESET ROLE;
-  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM qros_t02.reset_request();
   RETURN v;
 END $fn$;
 
@@ -1601,19 +1626,215 @@ BEGIN
     v IS NOT NULL AND v ->> 'status' = 'pending', COALESCE(v::text, 'refused'));
 END $t$;
 
--- 9.6 — F13's second exploit, restated as a property of this part: a client
---       must not be able to clear the cooldown clock it just tripped.
+-- 9.6 — F13, restated as a property of this part: the clocks the cooldown reads
+--       and the token the whole API is keyed on are SERVER-OWNED. A client that
+--       could clear last_waiter_call_at could hold the doorbell down all night.
+--
+--       Two independent layers can refuse this today — the column-level UPDATE
+--       grant (42501) and trg_tables_guard (PT403 QR053_IMMUTABLE_COLUMN) — and
+--       which one speaks first is an implementation detail. The assertion is
+--       that the write is refused AND the value does not move; the mechanism is
+--       recorded in the detail column so a change of layer is visible.
 SELECT qros_t02.expect_error(
-  'waiter call: a MANAGER cannot reset the per-table cooldown clocks (F13)',
+  'F13: a MANAGER cannot reset the per-table cooldown clocks (any layer)',
   $q$UPDATE public.tables
         SET last_waiter_call_at = NULL, last_order_at = NULL
       WHERE id = '02000000-0000-4000-8400-000000000011'$q$,
-  'QR053_IMMUTABLE_COLUMN', 'PT403',
-  '02000000-0000-4000-8500-000000000002', 'authenticated');
+  NULL, NULL, '02000000-0000-4000-8500-000000000002', 'authenticated');
 
 SELECT qros_t02.expect_error(
-  'waiter call: a MANAGER cannot hand-pick a QR token (F13)',
+  'F13: a MANAGER cannot hand-pick a QR token (any layer)',
   $q$UPDATE public.tables SET qr_token = 'aaaaaaaaaaaaaaaaaaaaaa'
       WHERE id = '02000000-0000-4000-8400-000000000011'$q$,
-  'QR053_IMMUTABLE_COLUMN', 'PT403',
-  '02000000-0000-4000-8500-000000000002', 'authenticated');
+  NULL, NULL, '02000000-0000-4000-8500-000000000002', 'authenticated');
+
+DO $t$
+DECLARE v public.tables%ROWTYPE;
+BEGIN
+  SELECT * INTO v FROM public.tables WHERE id = '02000000-0000-4000-8400-000000000011';
+  PERFORM qros_t02.assert('F13: the cooldown clock still holds the value the server wrote',
+    v.last_waiter_call_at IS NOT NULL, format('%s', v.last_waiter_call_at));
+  PERFORM qros_t02.assert('F13: the QR token is unchanged and is not the attacker''s string',
+    v.qr_token = 'T02TOK0000000000000011', v.qr_token);
+END $t$;
+
+
+-- =============================================================================
+-- PART 10 — REQUEST-SCOPED STATE, AND THE DEFERRED INVARIANTS
+--
+-- Every assertion above went through qros_t02.run_as(), which clears the
+-- request-scoped GUCs first. This part removes that scaffolding and looks at
+-- what the RPCs actually leave behind in the session, because the scaffolding is
+-- only honest if the thing it hides is written down.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '10. request-scoped state';
+
+DO $t$
+DECLARE
+  v_doc  jsonb;
+  v_leak text;
+  v_kind public.actor_kind;
+  v_ord  uuid;
+BEGIN
+  PERFORM qros_t02.reset_request();
+
+  -- Deliberately NOT via run_as(): this reproduces what happens if ONE
+  -- transaction ever performs a guest order and a staff transition back to back.
+  PERFORM set_config('request.jwt.claims', '', true);
+  SET LOCAL ROLE anon;
+  SELECT public.public_place_order(
+           'T02TOK0000000000000005',
+           '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}]'::jsonb,
+           NULL, NULL)
+    INTO v_doc;
+  RESET ROLE;
+
+  v_leak := COALESCE(current_setting('app.actor_kind', true), '');
+
+  PERFORM qros_t02.assert(
+    'public_place_order leaves app.guard_bypass cleared',
+    COALESCE(current_setting('app.guard_bypass', true), '') = '',
+    format('app.guard_bypass=%L', current_setting('app.guard_bypass', true)));
+
+  SELECT id INTO v_ord FROM public.orders WHERE public_code = v_doc ->> 'public_code';
+
+  -- Now a staff transition in the SAME transaction, with no reset in between.
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"02000000-0000-4000-8500-000000000003","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  UPDATE public.orders SET status = 'confirmed' WHERE id = v_ord;
+  RESET ROLE;
+
+  SELECT changed_by_kind INTO v_kind
+  FROM public.order_status_history
+  WHERE order_id = v_ord AND new_status = 'confirmed'
+  ORDER BY created_at DESC, id DESC LIMIT 1;
+
+  -- ---------------------------------------------------------------------------
+  -- DECLARED GAP — public_place_order sets app.actor_kind = 'customer' with
+  -- set_config(..., is_local => true), which lasts to the end of the TRANSACTION,
+  -- not to the end of the function (20260901001300_public_api.sql §7 step 7).
+  -- PostgREST gives every request its own transaction, so no real client can
+  -- chain a guest order and a staff transition into one — which is why this is
+  -- recorded as a gap and not as an exploit. It is still a latent forgery
+  -- vector for any future server-side code that batches the two, and the fix is
+  -- one line: reset the three app.actor_* GUCs before public_place_order
+  -- returns, the way it already resets app.guard_bypass.
+  -- ---------------------------------------------------------------------------
+  IF v_leak <> '' THEN
+    PERFORM qros_t02.record(
+      'declared gap: public_place_order leaks app.actor_kind past its own frame',
+      'GAP', format('app.actor_kind is still %L after the RPC returned; '
+                    || 'a staff transition batched into the same transaction '
+                    || 'was logged as changed_by_kind=%L', v_leak, v_kind));
+  ELSE
+    PERFORM qros_t02.assert('public_place_order leaves app.actor_kind cleared',
+      true, 'no leak — remove this declared gap');
+    PERFORM qros_t02.assert(
+      'a staff transition in the same transaction is still attributed to staff',
+      v_kind = 'staff', format('kind=%s', v_kind));
+  END IF;
+
+  PERFORM qros_t02.reset_request();
+END $t$;
+
+-- The deferred constraint triggers (trg_orders_totals_consistent / ORD02, ORD03)
+-- normally fire at COMMIT, and this file never commits. Force them now, or every
+-- order written above would be untested arithmetic.
+DO $t$
+DECLARE v_state text; v_msg text;
+BEGIN
+  BEGIN
+    SET CONSTRAINTS ALL IMMEDIATE;
+    PERFORM qros_t02.record('deferred integrity holds for every order written above',
+      'PASS', NULL);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+    PERFORM qros_t02.record('deferred integrity holds for every order written above',
+      'FAIL', format('%s %s', v_state, v_msg));
+  END;
+END $t$;
+
+-- Nothing above may have moved money on an existing order: re-derive every
+-- fixture order's totals from its own lines and its own snapshotted rate.
+DO $t$
+DECLARE v_bad text;
+BEGIN
+  SELECT string_agg(format('%s: subtotal %s vs lines %s, fee %s vs %s',
+           o.public_code, o.subtotal, x.line_sum, o.service_fee, x.want_fee), '; ')
+  INTO v_bad
+  FROM public.orders o
+  CROSS JOIN LATERAL (
+    SELECT COALESCE(sum(oi.total), 0)::bigint AS line_sum,
+           round((COALESCE(sum(oi.total), 0)::numeric * o.service_fee_bps) / 10000)::bigint AS want_fee
+    FROM public.order_items oi WHERE oi.order_id = o.id) x
+  WHERE o.restaurant_id = '02000000-0000-4000-8000-000000000001'
+    AND (o.subtotal <> x.line_sum
+         OR o.service_fee <> x.want_fee
+         OR o.total <> o.subtotal - o.discount_total + o.service_fee);
+
+  PERFORM qros_t02.assert('every order''s totals still re-derive from its own lines',
+    v_bad IS NULL, COALESCE(v_bad, 'all consistent'));
+END $t$;
+
+
+-- =============================================================================
+-- SUMMARY
+-- =============================================================================
+\pset tuples_only off
+\pset footer on
+
+\echo ''
+\echo '-- results by part ---------------------------------------------------'
+SELECT part,
+       count(*) FILTER (WHERE status = 'PASS') AS pass,
+       count(*) FILTER (WHERE status = 'FAIL') AS fail,
+       count(*) FILTER (WHERE status = 'GAP')  AS gap
+FROM qros_t02.results
+GROUP BY part
+ORDER BY part;
+
+\echo ''
+\echo '-- declared gaps (spec deviations that do not fail the build) ---------'
+SELECT part, name, detail FROM qros_t02.results WHERE status = 'GAP' ORDER BY seq;
+
+\echo ''
+\echo '-- failures ----------------------------------------------------------'
+SELECT part, name, detail FROM qros_t02.results WHERE status = 'FAIL' ORDER BY seq;
+
+DO $summary$
+DECLARE v_pass int; v_fail int; v_gap int;
+BEGIN
+  SELECT count(*) FILTER (WHERE status = 'PASS'),
+         count(*) FILTER (WHERE status = 'FAIL'),
+         count(*) FILTER (WHERE status = 'GAP')
+  INTO v_pass, v_fail, v_gap
+  FROM qros_t02.results;
+
+  RAISE NOTICE '02-public-api-and-state-machine.sql: % passed, % failed, % declared gap(s)',
+    v_pass, v_fail, v_gap;
+
+  IF v_fail > 0 THEN
+    RAISE EXCEPTION
+      '02-public-api-and-state-machine.sql FAILED: % of % assertions did not hold',
+      v_fail, v_pass + v_fail
+      USING HINT = 'see the failures table printed immediately above';
+  END IF;
+END $summary$;
+
+-- The suite owns nothing: every row it created goes away with this ROLLBACK, so
+-- verify.sh's database is exactly as it was before the file ran.
+ROLLBACK;
+
+DO $clean$
+DECLARE v_left bigint;
+BEGIN
+  SELECT count(*) INTO v_left FROM public.restaurants WHERE slug LIKE 't02-%';
+  IF v_left <> 0 THEN
+    RAISE EXCEPTION '02-public-api-and-state-machine.sql left % fixture row(s) behind', v_left;
+  END IF;
+  RAISE NOTICE 'PASS  fixture fully rolled back (0 rows left behind)';
+END $clean$;
+
+\echo '== 02-public-api-and-state-machine.sql: done ========================='
+\echo ''
