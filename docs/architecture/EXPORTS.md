@@ -1,0 +1,69 @@
+# Exports index — generated, do not edit by hand
+
+Every symbol the app layer may import, with its module path. Import these
+exact names; do not invent a component or helper that is not listed here.
+
+- `@/components/ui/badge` — AvailabilityStatus Badge BadgeProps BadgeSize BadgeTone BadgeVariant StatusPill StatusPillProps StatusPillSize  
+- `@/components/ui/button` — Button ButtonClassOptions ButtonProps ButtonSize ButtonVariant IconButton IconButtonProps IconButtonSize IconButtonVariant buttonClasses  
+- `@/components/ui/card` — Card CardElement CardPadding CardProps CardTone  
+- `@/components/ui/confirm-dialog` — ConfirmDialog ConfirmDialogProps ConfirmTone  
+- `@/components/ui/data-table` — DataTable DataTableAlign DataTableColumn DataTableDensity DataTableProps DataTableSort SortDirection  
+- `@/components/ui/dialog` — Dialog DialogProps DialogSize ModalOverlay ModalOverlayProps OVERLAY_BACKDROP OVERLAY_BASE OverlayCloseButton OverlayCloseButtonProps OverlayDurationToken StyleWithVars UseModalOverlayOptions prefersReducedMotion useModalOverlay  
+- `@/components/ui/drawer` — Drawer DrawerProps DrawerSide DrawerWidth useIsWideViewport  
+- `@/components/ui/empty-state` — EmptyState EmptyStateAction EmptyStateAlign EmptyStateProps EmptyStateSecondaryAction EmptyStateSize EmptyStateTitleElement  
+- `@/components/ui/error-state` — ErrorState ErrorStateAlign ErrorStateCode ErrorStateProps ErrorStateSize  
+- `@/components/ui/input` — Input InputProps InputSize  
+- `@/components/ui/language-switcher` — LanguageSwitcher LanguageSwitcherProps LanguageSwitcherSize LanguageSwitcherVariant  export { LanguageSwitcher as LocaleSwitcher }
+- `@/components/ui/loading-state` — LoadingState LoadingStateProps LoadingStateShape LoadingStateSize LoadingStateVariant  
+- `@/components/ui/page-header` — Breadcrumb PageHeader PageHeaderProps  
+- `@/components/ui/price-tag` — PriceTag PriceTagProps PriceTagSize PriceTagTone  
+- `@/components/ui/quantity-stepper` — QuantityStepper QuantityStepperProps QuantityStepperSize  
+- `@/components/ui/section` — Section SectionLevel SectionProps SectionSpacing  
+- `@/components/ui/segmented-control` — SegmentedControl SegmentedControlProps SegmentedControlSize SegmentedOption  
+- `@/components/ui/select` — Select SelectOption SelectProps SelectSize  
+- `@/components/ui/sheet` — Sheet SheetProps SheetSize UseDragDismissOptions UseDragDismissResult useDragDismiss  
+- `@/components/ui/skeleton` — Skeleton SkeletonProps SkeletonVariant  
+- `@/components/ui/spinner` — Spinner SpinnerProps SpinnerSize  
+- `@/components/ui/stat-card` — StatCard StatCardDelta StatCardDeltaTone StatCardProps StatCardTone  
+- `@/components/ui/switch` — Switch SwitchProps SwitchSize  
+- `@/components/ui/tabs` — TabItem Tabs TabsProps TabsSize TabsVariant tabPanelId tabTriggerId  
+- `@/components/ui/textarea` — Textarea TextareaProps TextareaSize  
+- `@/components/ui/theme-toggle` — ResolvedTheme THEME_STORAGE_KEY ThemePreference ThemeToggle ThemeToggleLabels ThemeToggleProps ThemeToggleVariant resolveTheme  
+- `@/components/ui/toast` — MAX_VISIBLE_TOASTS ToastAction ToastFn ToastInput ToastRecord ToastTone Toaster ToasterProps dismissAllToasts dismissToast toast useToasts  
+- `@/components/ui/tooltip` — Tooltip TooltipProps TooltipSide  
+- `@/lib/i18n/config` — BCP47 DEFAULT_LOCALE LOCALES LOCALE_COOKIE LOCALE_COOKIE_MAX_AGE LOCALE_DIRECTION LOCALE_FALLBACK_ORDER LOCALE_NATIVE_NAMES LOCALE_QUERY_PARAM LOCALE_SHORT_LABELS bcp47 direction isLocale nativeName  
+- `@/lib/i18n/format` — CURRENCY_DECIMALS FormatDurationOptions FormatNumberOptions Instant Translator createTranslator currencyDecimals formatCompactNumber formatDate formatDateTime formatDuration formatFileSize formatList formatMoney formatMoneyAuto formatNumber formatPercentFromBps formatRelativeTime formatTime interpolate translate translatePlural  
+- `@/lib/i18n/get-dictionary` — CATALOGUES getDictionary getMessages getServerTranslator  
+- `@/lib/i18n/plural` — PLURAL_CATEGORIES PluralCategory plural selectPluralForm  
+- `@/lib/i18n/resolve-locale` — LocaleCookieOptions ResolveLocaleInput SearchParamsInput localeCookieOptions parseAcceptLanguage readLangParam resolveLocaleFrom resolveRequestLocale setLocaleCookie  
+- `@/lib/i18n/types` — DeepReadonly Dictionary DictionaryPath Locale MessageKey MessageParams Messages PluralForms PluralPath ReadonlyDictionary StateCopy StringPath  
+- `@/lib/i18n/provider` — LocaleContextValue LocaleProvider LocaleProviderProps useDictionary useLocale useLocaleContext useLocaleTag useT  
+- `@/lib/env` — appUrl isDemoMode isSupabaseConfigured publicEnv requireServiceRoleKey requireSupabasePublicConfig  
+- `@/lib/fonts` — displayFont fontVariables monoFont sansFont  
+- `@/lib/money` — BPS_DENOMINATOR MONEY_MAX Money MoneyError applyBps assertMoney formatMoney fromMinor isMoney multiplyMoney subtractMoney sumMoney toMinor  
+- `@/lib/result` — AppErrorException appError err isErr isOk mapResult ok toResult unwrapOr  
+- `@/lib/rpc/public` — PlaceOrderArgs callWaiter cancelOrder getMenu getOrder placeOrder resolveTable  
+- `@/lib/rpc/schemas` — CallWaiterInputSchema CancelOrderInputSchema GetOrderInputSchema PlaceOrderInput PlaceOrderInputSchema PlaceOrderLineSchema PlaceOrderPayload PublicBranchSchema PublicCategorySchema PublicMenu PublicMenuCategory PublicMenuItem PublicMenuItemSchema PublicMenuOption PublicMenuOptionSchema PublicMenuSchema PublicOptionGroup PublicOptionGroupSchema PublicOrder PublicOrderHistorySchema PublicOrderLine PublicOrderLineOptionSchema PublicOrderLineSchema PublicOrderSchema PublicPromotion PublicPromotionSchema PublicRestaurantSchema PublicTableContext PublicTableContextSchema PublicTableSchema WaiterCallResult WaiterCallResultSchema  
+- `@/lib/orders/lateness` — LatenessLevel Timed dueAt elapsedSeconds formatElapsed isLate isOpen latenessLevel  
+- `@/lib/orders/pricing` — FeeConfig priceCart  
+- `@/lib/orders/state-machine` — ACTOR_ROLES ActorRole ORDER_FORWARD_PATH ORDER_TRANSITIONS ORDER_TRANSITION_ACTORS TERMINAL_ORDER_STATUSES TransitionKey actorsFor assertTransition canTransition isTerminalStatus isValidTransition nextStatuses requiresCancellationReason statusIndex transitionKey  
+- `@/lib/validation/common` — anyUuidSchema appRoleSchema bpsSchema branchCodeSchema currencyDecimalsSchema currencySchema dietaryTagSchema emailSchema i18nTextSchema imageUrlSchema localeSchema moneySchema noteSchema optionalI18nTextSchema optionalNoteSchema orderStatusSchema phoneSchema publicCodeSchema qrTokenSchema selectionTypeSchema slugSchema sortOrderSchema staffRoleSchema storagePathSchema tableNumberSchema timezoneSchema uuidSchema waiterCallReasonSchema waiterCallStatusSchema  
+- `@/lib/validation/menu` — CategoryInput MenuItemAvailabilityInput MenuItemInput MenuItemOptionInput ReorderInput categorySchema menuItemAvailabilitySchema menuItemOptionSchema menuItemSchema reorderSchema  export { bpsSchema }
+- `@/lib/validation/order` — CancelOrderInput CartLineInput PlaceOrderInput StatusUpdateInput cancelOrderSchema cartLineSchema placeOrderSchema statusUpdateSchema  
+- `@/lib/validation/tenancy` — BranchInput RotateTableTokenInput SettingsInput StaffInput TableInput branchSchema rotateTableTokenSchema settingsSchema staffSchema tableSchema  export { i18nTextSchema, sortOrderSchema }
+- `@/lib/validation/waiter` — WaiterCallInput WaiterCallUpdateInput waiterCallSchema waiterCallUpdateSchema  
+- `@/lib/supabase/admin` — AdminSupabaseClient createAdminClient  
+- `@/lib/supabase/browser` — BrowserSupabaseClient createBrowserClient  
+- `@/lib/supabase/public-client` — PublicSupabaseClient createPublicClient  
+- `@/lib/supabase/server` — ServerSupabaseClient createServerClient  
+- `@/lib/security/errors` — APP_ERROR_MESSAGE_KEYS QR_TO_APP_ERROR QrErrorCode mapPgError messageKeyFor  
+- `@/lib/security/rate-limit` — LimitKind LimitResult __resetLimits checkLimit clientIp  
+- `@/lib/realtime/channels` — ALERT_DEDUPE_MS BRANCH_EVENTS BRANCH_TABLES BranchEvent BranchTable BranchTopic HYDRATION_COALESCE_MS InvalidTopicError JOIN_TIMEOUT_MS KDS_READY_TTL_MS KDS_STATUSES OPEN_CALL_STATUSES ORDER_EVENTS OrderEvent OrderTopic REALTIME_PROTOCOL_VERSION RESYNC_DEBOUNCE_MS RealtimeTopic STALE_AFTER_MS TABLE_EVENTS TableEvent TableTopic WAITER_ACTIVE_STATUSES branchTopic orderTopic tableTopic  
+- `@/lib/cart/cart-store` — CartAction CartContext cartReducer cartStorageKey checkoutBlockers clearStoredCart createEmptyCart isCheckoutable loadCart saveCart  
+- `@/lib/utils/cn` — cn  
+- `@/lib/utils/datetime` — businessDateFor isSameBusinessDate isValidTimeZone startOfBusinessDayUtc  
+- `@/lib/utils/id` — newCartLineId newClientRequestId  
+- `@/types/database` — APP_ROLES ActorKind AppLocale AppRole BranchInsert BranchOrderCounterRow BranchRow BranchUpdate DIETARY_TAGS Database DietaryTag Insertable Json MenuCategoryInsert MenuCategoryRow MenuCategoryUpdate MenuItemInsert MenuItemOptionInsert MenuItemOptionRow MenuItemOptionUpdate MenuItemRow MenuItemUpdate NOTIFICATION_TYPES NotificationReadInsert NotificationReadRow NotificationRow NotificationType OPTION_SELECTION_TYPES ORDER_CHANNELS ORDER_STATUSES ORDER_TYPES OptionSelectionType OrderChannel OrderItemInsert OrderItemOptionInsert OrderItemOptionRow OrderItemRow OrderRow OrderStatus OrderStatusHistoryRow OrderStatusUpdate OrderType PROMOTION_TYPES ProfileInsert ProfileRow ProfileUpdate PromotionInsert PromotionItemInsert PromotionItemRow PromotionRow PromotionType PromotionUpdate QrTokenHistoryRow RestaurantInsert RestaurantRow RestaurantUpdate STAFF_ROLES StaffInsert StaffRole StaffRow StaffUpdate TableInsert TableRow TableUpdate Updatable WAITER_CALL_REASONS WAITER_CALL_STATUSES WaiterCallReason WaiterCallRow WaiterCallStatus WaiterCallUpdate  
+- `@/types/domain` — CartLine CartLineOption CartState CartTotals DashboardStats DashboardTopItem KitchenTicket KitchenTicketLine MenuCategoryView MenuItemView MenuOptionGroupView MenuOptionView MenuTree OrderLineOptionView OrderLineView OrderStatusEvent OrderView PromotionView StaffSession TableContext TableContextBranch TableContextRestaurant TableContextTable WaiterCallView  
+- `@/types/i18n` — BCP47 DEFAULT_LOCALE I18nText LOCALES Locale MessageKey Messages  
+- `@/types/result` — AppError AppErrorCode Err Ok Result  
