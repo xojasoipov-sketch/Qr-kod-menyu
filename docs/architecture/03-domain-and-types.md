@@ -1521,7 +1521,7 @@ export function toMinor(major: string | number, decimals: number): Money {
   }
 
   // Normalise: strip spaces and NBSP group separators, unify the decimal mark to '.'.
-  let raw = String(major).trim().replace(/[\s  ]/g, '');
+  let raw = String(major).trim().replace(/[\s\u00A0\u202F]/g, '');
   if (raw === '') throw new MoneyError('empty amount');
 
   let sign = 1;
@@ -1648,7 +1648,7 @@ export function formatMoney(
   const prefix = locale === 'en' && PREFIX_IN_EN.has(code);
 
   // U+00A0 NO-BREAK SPACE: the amount and its currency must never wrap apart.
-  return prefix ? `${label}${digits}` : `${digits} ${label}`;
+  return prefix ? `${label}${digits}` : `${digits}\u00A0${label}`;
 }
 
 /* ------------------------------------------------------------------ */
