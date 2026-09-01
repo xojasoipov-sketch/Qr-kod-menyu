@@ -616,3 +616,1004 @@ END $t$;
 SELECT qros_t02.expect_ok(
   'the NEW token resolves after rotation',
   $q$SELECT public.public_resolve_table('T02TOKROTATED00000000A')$q$, NULL, 'anon');
+
+
+-- =============================================================================
+-- PART 3 — PRICE INTEGRITY: THE SERVER PRICES THE ORDER, THE CLIENT DOES NOT
+--
+-- doc 02 §1.3 and 20260901001300 §7:
+--   "There is no price field anywhere in its input; subtotal, service fee and
+--    total are authored here from menu_items.price, menu_item_options.price_delta
+--    and the snapshotted service_fee_bps, in BIGINT minor units."
+--
+-- The payload below is hostile in every way a browser can be: it carries price,
+-- unit_price, total, subtotal, service_fee, service_fee_bps, discount_total,
+-- currency and name keys, all lying. None of them may reach the order.
+--
+-- Menu: Osh = 50000, Non = 5000. Service fee = 1000 bps (10%) on the tenant.
+-- Correct answer: subtotal 105000, fee 10500, total 115500.
+-- The payload asks for:  subtotal 1,     fee 0,     total 1.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '3. server-side pricing';
+
+DO $t$
+DECLARE
+  v_doc      jsonb;
+  v_order    public.orders%ROWTYPE;
+  v_lines    bigint;
+  v_bad      bigint;
+BEGIN
+  v_doc := qros_t02.call_json(NULL, 'anon', $q$
+    SELECT public.public_place_order(
+      'T02TOK0000000000000002',
+      '[{"menu_item_id":"02000000-0000-4000-8300-000000000001",
+         "quantity":2,
+         "price":1, "unit_price":1, "line_total":1, "total":1,
+         "name":{"uz":"Bepul"}, "price_snapshot":1, "options_total":-100000},
+        {"menu_item_id":"02000000-0000-4000-8300-000000000002",
+         "quantity":1,
+         "price":0, "unit_price":0, "total":0,
+         "subtotal":1, "service_fee":0, "service_fee_bps":0,
+         "discount_total":999999, "currency":"XXX"}]'::jsonb,
+      'attacker note', NULL)$q$);
+
+  SELECT * INTO v_order FROM public.orders WHERE public_code = v_doc ->> 'public_code';
+
+  PERFORM qros_t02.assert('place_order: subtotal is priced from menu_items (105000)',
+    v_order.subtotal = 105000, format('got %s', v_order.subtotal));
+  PERFORM qros_t02.assert('place_order: service fee is the snapshotted rate (10500)',
+    v_order.service_fee = 10500, format('got %s (bps %s)', v_order.service_fee, v_order.service_fee_bps));
+  PERFORM qros_t02.assert('place_order: total is subtotal - discount + fee (115500)',
+    v_order.total = 115500, format('got %s', v_order.total));
+  PERFORM qros_t02.assert('place_order: the payload''s discount_total is ignored (0)',
+    v_order.discount_total = 0, format('got %s', v_order.discount_total));
+  PERFORM qros_t02.assert('place_order: the payload''s service_fee_bps is ignored (1000)',
+    v_order.service_fee_bps = 1000, format('got %s', v_order.service_fee_bps));
+  PERFORM qros_t02.assert('place_order: the payload''s currency is ignored (UZS)',
+    v_order.currency = 'UZS', format('got %s', v_order.currency));
+
+  -- The returned document must agree with the stored row; a client that trusted
+  -- the RPC's answer must not be told a different number from the one billed.
+  PERFORM qros_t02.assert('place_order: the returned document quotes the stored total',
+    (v_doc ->> 'total')::bigint = v_order.total
+    AND (v_doc ->> 'subtotal')::bigint = v_order.subtotal,
+    format('doc total %s / subtotal %s', v_doc ->> 'total', v_doc ->> 'subtotal'));
+
+  SELECT count(*), count(*) FILTER (WHERE oi.price_snapshot <= 1 OR oi.total <= 1)
+  INTO v_lines, v_bad
+  FROM public.order_items oi WHERE oi.order_id = v_order.id;
+
+  PERFORM qros_t02.assert('place_order: both lines were written', v_lines = 2,
+    format('got %s', v_lines));
+  PERFORM qros_t02.assert('place_order: no line took the attacker''s price',
+    v_bad = 0, format('%s suspicious line(s)', v_bad));
+
+  PERFORM qros_t02.assert('place_order: the line price_snapshot equals menu_items.price',
+    (SELECT oi.price_snapshot FROM public.order_items oi
+      WHERE oi.order_id = v_order.id
+        AND oi.menu_item_id = '02000000-0000-4000-8300-000000000001') = 50000);
+  PERFORM qros_t02.assert('place_order: the line name_snapshot is the menu name, not the payload''s',
+    (SELECT oi.name_snapshot::jsonb ->> 'uz' FROM public.order_items oi
+      WHERE oi.order_id = v_order.id
+        AND oi.menu_item_id = '02000000-0000-4000-8300-000000000001') = 'Osh');
+
+  -- The customer's own text IS honoured — the control is on money, not on notes.
+  PERFORM qros_t02.assert('place_order: the customer note is kept',
+    v_order.customer_note = 'attacker note', COALESCE(v_order.customer_note, '<null>'));
+END $t$;
+
+
+-- =============================================================================
+-- PART 4 — WHAT public_place_order MUST REFUSE
+--
+-- doc 01 §6.8 (the binding orderability rule) and doc 02 §1.4 / §2.6.
+-- Every refusal below is checked for its documented machine code AND SQLSTATE.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '4. place_order refusals';
+
+SELECT qros_t02.expect_error(
+  'place_order refuses an UNAVAILABLE (86''d) item',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000003","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR020_ITEM_UNAVAILABLE', 'PT409', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses an item belonging to ANOTHER restaurant',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000004","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR020_ITEM_UNAVAILABLE', 'PT409', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses an item that does not exist at all',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-0000000000ff","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR020_ITEM_UNAVAILABLE', 'PT409', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a branch that has PAUSED ordering (is_accepting_orders)',
+  $q$SELECT public.public_place_order('T02TOK0000000000000008',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR003_BRANCH_INACTIVE', 'PT423', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a DEACTIVATED branch',
+  $q$SELECT public.public_place_order('T02TOK0000000000000009',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR003_BRANCH_INACTIVE', 'PT423', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a DEACTIVATED restaurant',
+  $q$SELECT public.public_place_order('T02TOK0000000000000010',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR004_RESTAURANT_INACTIVE', 'PT423', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses quantity = 0',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":0}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR024_QUANTITY_OUT_OF_RANGE', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a NEGATIVE quantity (a credit line)',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":-5}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR024_QUANTITY_OUT_OF_RANGE', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses an ABSURD quantity (1000000)',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1000000}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR024_QUANTITY_OUT_OF_RANGE', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a quantity that does not fit in an integer',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":99999999999999}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR023_INVALID_PAYLOAD', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a missing quantity',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002"}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR024_QUANTITY_OUT_OF_RANGE', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses an empty cart',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017', '[]'::jsonb, NULL, NULL)$q$,
+  'QR023_INVALID_PAYLOAD', 'PT422', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'place_order refuses a payload that is not an array',
+  $q$SELECT public.public_place_order('T02TOK0000000000000017',
+       '{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}'::jsonb,
+       NULL, NULL)$q$,
+  'QR023_INVALID_PAYLOAD', 'PT422', NULL, 'anon');
+
+-- Nothing above may have left a row behind: a refused order is not a cancelled
+-- order, it never existed.
+DO $t$
+DECLARE v_n bigint;
+BEGIN
+  SELECT count(*) INTO v_n FROM public.orders
+  WHERE table_id IN ('02000000-0000-4000-8400-000000000017',
+                     '02000000-0000-4000-8400-000000000008',
+                     '02000000-0000-4000-8400-000000000009',
+                     '02000000-0000-4000-8400-000000000010');
+  PERFORM qros_t02.assert('a refused place_order leaves NO orders row behind',
+    v_n = 0, format('%s row(s)', v_n));
+END $t$;
+
+
+-- =============================================================================
+-- PART 5 — order_items ARE SNAPSHOTS, NOT POINTERS
+--
+-- doc 01 §7 / doc 02 §2.6: every order line carries name_snapshot,
+-- description_snapshot, price_snapshot ... so that repricing or renaming a dish
+-- tomorrow cannot rewrite what a guest ordered and was billed today.
+--
+-- The repricing below is performed by a real MANAGER through the ordinary write
+-- path, not by the superuser session, so this doubles as the positive control
+-- that a menu manager can still do their job after the column-grant narrowing.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '5. price/name snapshots';
+
+DO $t$
+DECLARE v_doc jsonb;
+BEGIN
+  v_doc := qros_t02.call_json(NULL, 'anon', $q$
+    SELECT public.public_place_order(
+      'T02TOK0000000000000003',
+      '[{"menu_item_id":"02000000-0000-4000-8300-000000000005","quantity":3}]'::jsonb,
+      NULL, NULL)$q$);
+  PERFORM set_config('qros_t02.snap_code', v_doc ->> 'public_code', true);
+
+  PERFORM qros_t02.assert('snapshot: the order was billed at the price of the day (90000)',
+    (v_doc ->> 'subtotal')::bigint = 90000, format('got %s', v_doc ->> 'subtotal'));
+END $t$;
+
+SELECT qros_t02.expect_ok(
+  'a MANAGER can rename and reprice a menu item (positive control)',
+  $q$UPDATE public.menu_items
+        SET name  = '{"uz":"Qayta nomlangan","en":"Renamed"}'::jsonb,
+            price = 999000
+      WHERE id = '02000000-0000-4000-8300-000000000005'$q$,
+  '02000000-0000-4000-8500-000000000002', 'authenticated');
+
+DO $t$
+DECLARE
+  v_item public.menu_items%ROWTYPE;
+  v_line public.order_items%ROWTYPE;
+  v_ord  public.orders%ROWTYPE;
+  v_doc  jsonb;
+BEGIN
+  SELECT * INTO v_item FROM public.menu_items
+   WHERE id = '02000000-0000-4000-8300-000000000005';
+  SELECT * INTO v_ord  FROM public.orders
+   WHERE public_code = current_setting('qros_t02.snap_code', true);
+  SELECT * INTO v_line FROM public.order_items WHERE order_id = v_ord.id;
+
+  -- Guard against a vacuous test: the menu really did change.
+  PERFORM qros_t02.assert('snapshot: the menu item really was repriced (999000)',
+    v_item.price = 999000, format('menu price now %s', v_item.price));
+  PERFORM qros_t02.assert('snapshot: the menu item really was renamed',
+    v_item.name::jsonb ->> 'uz' = 'Qayta nomlangan', v_item.name::text);
+
+  PERFORM qros_t02.assert('snapshot: the ORDER LINE keeps the original price (30000)',
+    v_line.price_snapshot = 30000, format('got %s', v_line.price_snapshot));
+  PERFORM qros_t02.assert('snapshot: the ORDER LINE keeps the original name',
+    v_line.name_snapshot::jsonb ->> 'uz' = 'Original nomi', v_line.name_snapshot::text);
+  PERFORM qros_t02.assert('snapshot: the ORDER LINE total is unchanged (90000)',
+    v_line.total = 90000, format('got %s', v_line.total));
+  PERFORM qros_t02.assert('snapshot: the ORDER total is unchanged (90000 + 10 percent fee = 99000)',
+    v_ord.subtotal = 90000 AND v_ord.total = 99000,
+    format('subtotal %s total %s', v_ord.subtotal, v_ord.total));
+
+  -- ... and the customer-facing document tells the same story.
+  v_doc := qros_t02.call_json(NULL, 'anon', format(
+    $q$SELECT public.public_get_order('T02TOK0000000000000003', %L)$q$,
+    current_setting('qros_t02.snap_code', true)));
+  PERFORM qros_t02.assert('snapshot: public_get_order still shows the original name and price',
+    v_doc #>> '{lines,0,name,uz}' = 'Original nomi'
+    AND (v_doc #>> '{lines,0,unit_price}')::bigint = 30000,
+    format('%s / %s', v_doc #>> '{lines,0,name,uz}', v_doc #>> '{lines,0,unit_price}'));
+END $t$;
+
+
+-- =============================================================================
+-- PART 6 — public_get_order NEEDS BOTH CAPABILITIES
+--
+-- doc 02 §2.4 / 20260901001300 §8:
+--   "BOTH capabilities must match: an order code forwarded to a group chat is
+--    useless without the table's QR token — the same trust boundary as
+--    physically sitting there."
+--   "Wrong order code, or the right code at the wrong table: identical error."
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '6. get_order capabilities';
+
+DO $t$
+DECLARE v_doc jsonb;
+BEGIN
+  v_doc := qros_t02.call_json(NULL, 'anon', $q$
+    SELECT public.public_place_order(
+      'T02TOK0000000000000004',
+      '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":2}]'::jsonb,
+      NULL, NULL)$q$);
+  PERFORM set_config('qros_t02.track_code', v_doc ->> 'public_code', true);
+END $t$;
+
+DO $t$
+DECLARE v_code text := current_setting('qros_t02.track_code', true);
+BEGIN
+  -- Positive control: token 4 + its own code.
+  PERFORM qros_t02.expect_ok('get_order accepts token + its own order code',
+    format($q$SELECT public.public_get_order('T02TOK0000000000000004', %L)$q$, v_code),
+    NULL, 'anon');
+
+  -- The order code alone is not a capability: there is no one-argument form, and
+  -- an empty or absent token is refused before the code is even looked at.
+  PERFORM qros_t02.expect_error('get_order refuses the order code with a NULL token',
+    format($q$SELECT public.public_get_order(NULL, %L)$q$, v_code),
+    'QR001_INVALID_QR_TOKEN', 'PT404', NULL, 'anon');
+  PERFORM qros_t02.expect_error('get_order refuses the order code with an EMPTY token',
+    format($q$SELECT public.public_get_order('', %L)$q$, v_code),
+    'QR001_INVALID_QR_TOKEN', 'PT404', NULL, 'anon');
+  PERFORM qros_t02.expect_error('get_order refuses the order code with a FORGED token',
+    format($q$SELECT public.public_get_order('T02NOSUCHTOKEN000000ZZ', %L)$q$, v_code),
+    'QR001_INVALID_QR_TOKEN', 'PT404', NULL, 'anon');
+
+  -- The right code presented at the WRONG table (table 5, same branch, same
+  -- tenant) must be indistinguishable from a code that does not exist.
+  PERFORM qros_t02.expect_error(
+    'get_order refuses a valid code from a DIFFERENT table (same branch)',
+    format($q$SELECT public.public_get_order('T02TOK0000000000000005', %L)$q$, v_code),
+    'QR030_ORDER_NOT_FOUND', 'PT404', NULL, 'anon');
+  PERFORM qros_t02.expect_error(
+    'get_order refuses a valid code from a table in ANOTHER restaurant',
+    format($q$SELECT public.public_get_order('T02TOK0000000000000018', %L)$q$, v_code),
+    'QR030_ORDER_NOT_FOUND', 'PT404', NULL, 'anon');
+
+  -- A wrong code at the right table gets the SAME error, so the pair cannot be
+  -- probed apart.
+  PERFORM qros_t02.expect_error('get_order refuses an unknown order code',
+    $q$SELECT public.public_get_order('T02TOK0000000000000004', 'ZZZZZZZZZZ')$q$,
+    'QR030_ORDER_NOT_FOUND', 'PT404', NULL, 'anon');
+  PERFORM qros_t02.expect_error('get_order refuses a malformed order code',
+    $q$SELECT public.public_get_order('T02TOK0000000000000004', 'x')$q$,
+    'QR030_ORDER_NOT_FOUND', 'PT404', NULL, 'anon');
+  PERFORM qros_t02.expect_error('get_order refuses a NULL order code',
+    $q$SELECT public.public_get_order('T02TOK0000000000000004', NULL)$q$,
+    'QR030_ORDER_NOT_FOUND', 'PT404', NULL, 'anon');
+END $t$;
+
+-- The customer document must not leak internal identity (doc 02 §2.5: the
+-- resolved ids "are NEVER emitted to anon").
+DO $t$
+DECLARE v_doc jsonb; v_leaks text;
+BEGIN
+  v_doc := qros_t02.call_json(NULL, 'anon', format(
+    $q$SELECT public.public_get_order('T02TOK0000000000000004', %L)$q$,
+    current_setting('qros_t02.track_code', true)));
+
+  SELECT string_agg(k, ', ' ORDER BY k) INTO v_leaks
+  FROM jsonb_object_keys(v_doc) k
+  WHERE k IN ('id','restaurant_id','branch_id','table_id','customer_session_id',
+              'client_request_id','payload_fingerprint','confirmed_by_staff_id',
+              'served_by_staff_id','cancelled_by_staff_id');
+
+  PERFORM qros_t02.assert('get_order emits no tenant ids or staff identities',
+    v_leaks IS NULL, COALESCE('leaked: ' || v_leaks, 'none'));
+END $t$;
+
+
+-- =============================================================================
+-- PART 7 — THE ORDER STATE MACHINE IS ROLE-AWARE (doc 02 §3.17 / §3.18, F08)
+--
+-- F08: "THE STATUS STATE MACHINE IS NOT ROLE-AWARE ... a KITCHEN account PATCHes
+-- a `preparing` order to {status:cancelled} ... a WAITER cancels a `ready` order
+-- ... a KITCHEN account drives ready -> delivered -> completed."
+--
+-- qros_t02.spec_transition_allowed() below is doc 02 §3.17 TRANSCRIBED, with the
+-- lowercase role labels of the doc mapped onto the binding UPPER_SNAKE members of
+-- public.app_role (doc 03 §1 reconciliation). It is the oracle; nothing in it is
+-- read from a migration.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '7. state machine';
+
+CREATE FUNCTION qros_t02.spec_transition_allowed(
+  p_from  public.order_status,
+  p_to    public.order_status,
+  p_actor public.app_role
+) RETURNS boolean LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT CASE
+    -- terminal states are terminal for everybody
+    WHEN p_actor IS NULL                      THEN false
+    WHEN p_from IN ('completed','cancelled')  THEN false
+    WHEN p_from = p_to                        THEN false
+
+    -- cancellation
+    WHEN p_to = 'cancelled' THEN CASE p_actor
+      WHEN 'SUPER_ADMIN'      THEN p_from IN ('pending','confirmed','preparing','ready','delivered')
+      WHEN 'RESTAURANT_OWNER' THEN p_from IN ('pending','confirmed','preparing','ready','delivered')
+      WHEN 'MANAGER'          THEN p_from IN ('pending','confirmed','preparing','ready')
+      WHEN 'WAITER'           THEN p_from IN ('pending','confirmed')
+      ELSE false                              -- kitchen may never cancel
+    END
+
+    -- forward path
+    WHEN p_from = 'pending'   AND p_to = 'confirmed' THEN
+      p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER','MANAGER','WAITER','KITCHEN')
+    WHEN p_from = 'confirmed' AND p_to = 'preparing' THEN
+      p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER','MANAGER','KITCHEN')
+    WHEN p_from = 'preparing' AND p_to = 'ready'     THEN
+      p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER','MANAGER','KITCHEN')
+    WHEN p_from = 'ready'     AND p_to = 'delivered' THEN
+      p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER','MANAGER','WAITER')
+    WHEN p_from = 'delivered' AND p_to = 'completed' THEN
+      p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER','MANAGER','WAITER')
+    ELSE false
+  END;
+$fn$;
+
+-- ---------------------------------------------------------------------------
+-- DECLARED GAPS — the ONLY places this suite tolerates the database being
+-- stricter than doc 02 §3.17. Each entry must be justified here in writing.
+--
+--   (delivered -> cancelled, SUPER_ADMIN | RESTAURANT_OWNER)
+--     §3.17 permits it and the reference graph in the same section draws the
+--     cancel arrow from `delivered`. The database does not: the structural graph
+--     public.is_valid_order_transition() (20260901000800_functions_triggers.sql)
+--     has `WHEN 'delivered' THEN p_to = 'completed'`, and BOTH
+--     public.order_transition_allowed() and the CHECK constraint
+--     ck_order_status_history_transition_legal are built on it. So an owner
+--     cannot walk back an order that has already been handed to the guest.
+--     This is RESTRICTIVE, not permissive — it grants nobody anything — so it
+--     does not fail the build. Closing it needs a change to the graph function
+--     AND to the history CHECK, which is a schema migration, not a test fix.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION qros_t02.declared_gap(
+  p_from public.order_status, p_to public.order_status, p_actor public.app_role
+) RETURNS boolean LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT p_from = 'delivered' AND p_to = 'cancelled'
+     AND p_actor IN ('SUPER_ADMIN','RESTAURANT_OWNER');
+$fn$;
+
+-- ---------------------------------------------------------------------------
+-- 7A. The predicate itself, over the COMPLETE grid: 7 statuses x 7 statuses x
+--     5 roles = 245 triples, plus the NULL actor.
+-- ---------------------------------------------------------------------------
+DO $t$
+DECLARE
+  v_permissive  text;
+  v_undeclared  text;
+  v_gap_rows    text;
+  v_closed      text;
+  v_n           bigint;
+BEGIN
+  CREATE TEMP TABLE t02_grid ON COMMIT DROP AS
+  SELECT f.s AS from_s, t.s AS to_s, r.r AS actor,
+         qros_t02.spec_transition_allowed(f.s, t.s, r.r)  AS spec,
+         public.order_transition_allowed(f.s, t.s, r.r)   AS actual,
+         qros_t02.declared_gap(f.s, t.s, r.r)             AS declared
+  FROM   (SELECT unnest(enum_range(NULL::public.order_status)) s) f,
+         (SELECT unnest(enum_range(NULL::public.order_status)) s) t,
+         (SELECT unnest(enum_range(NULL::public.app_role))     r) r;
+
+  SELECT count(*) INTO v_n FROM t02_grid;
+  PERFORM qros_t02.assert('§3.17 grid was evaluated in full (245 triples)',
+    v_n = 245, format('%s triples', v_n));
+
+  -- (a) PERMISSIVE drift: the database allows what §3.17 forbids. Always a FAIL.
+  SELECT string_agg(format('%s->%s/%s', from_s, to_s, actor), ', ' ORDER BY from_s, to_s, actor)
+  INTO v_permissive FROM t02_grid WHERE COALESCE(actual, false) AND NOT spec;
+  PERFORM qros_t02.assert('§3.17: the database allows NOTHING the spec forbids',
+    v_permissive IS NULL, COALESCE('extra: ' || v_permissive, 'none'));
+
+  -- (b) RESTRICTIVE drift that is NOT declared above. Also a FAIL: an
+  --     undocumented refusal is a broken feature.
+  SELECT string_agg(format('%s->%s/%s', from_s, to_s, actor), ', ' ORDER BY from_s, to_s, actor)
+  INTO v_undeclared FROM t02_grid
+  WHERE spec AND NOT COALESCE(actual, false) AND NOT declared;
+  PERFORM qros_t02.assert('§3.17: every refusal beyond the spec is a DECLARED gap',
+    v_undeclared IS NULL, COALESCE('undeclared: ' || v_undeclared, 'none'));
+
+  -- (c) the declared gaps, reported loudly so they cannot be forgotten.
+  SELECT string_agg(format('%s->%s/%s', from_s, to_s, actor), ', ' ORDER BY from_s, to_s, actor)
+  INTO v_gap_rows FROM t02_grid WHERE declared AND spec AND NOT COALESCE(actual, false);
+  IF v_gap_rows IS NOT NULL THEN
+    PERFORM qros_t02.record('§3.17 declared gap: spec permits, database refuses',
+      'GAP', v_gap_rows || '  (is_valid_order_transition has no delivered->cancelled edge)');
+  END IF;
+
+  -- (d) a gap that has since been CLOSED must be removed from the list, or the
+  --     list quietly becomes a licence to fail.
+  SELECT string_agg(format('%s->%s/%s', from_s, to_s, actor), ', ' ORDER BY from_s, to_s, actor)
+  INTO v_closed FROM t02_grid WHERE declared AND spec AND COALESCE(actual, false);
+  IF v_closed IS NOT NULL THEN
+    PERFORM qros_t02.record('§3.17 declared gap is now CLOSED — delete it from qros_t02.declared_gap',
+      'GAP', v_closed);
+  END IF;
+
+  -- (e) the named exploits of F08, asserted individually so a regression names
+  --     itself rather than hiding in an aggregate.
+  PERFORM qros_t02.assert('§3.17: KITCHEN may never cancel (any source state)',
+    NOT EXISTS (SELECT 1 FROM t02_grid
+                 WHERE actor = 'KITCHEN' AND to_s = 'cancelled' AND COALESCE(actual, false)));
+  PERFORM qros_t02.assert('§3.17: WAITER may cancel only pending/confirmed',
+    NOT EXISTS (SELECT 1 FROM t02_grid
+                 WHERE actor = 'WAITER' AND to_s = 'cancelled'
+                   AND from_s NOT IN ('pending','confirmed') AND COALESCE(actual, false)));
+  PERFORM qros_t02.assert('§3.17: MANAGER may not cancel a delivered order',
+    NOT public.order_transition_allowed('delivered','cancelled','MANAGER'));
+  PERFORM qros_t02.assert('§3.17: KITCHEN may not drive ready -> delivered',
+    NOT public.order_transition_allowed('ready','delivered','KITCHEN'));
+  PERFORM qros_t02.assert('§3.17: KITCHEN may not drive delivered -> completed',
+    NOT public.order_transition_allowed('delivered','completed','KITCHEN'));
+  PERFORM qros_t02.assert('§3.17: WAITER may not drive preparing -> ready',
+    NOT public.order_transition_allowed('preparing','ready','WAITER'));
+  PERFORM qros_t02.assert('§3.17: completed -> preparing is refused for every role',
+    NOT EXISTS (SELECT 1 FROM t02_grid
+                 WHERE from_s = 'completed' AND to_s = 'preparing' AND COALESCE(actual, false)));
+  PERFORM qros_t02.assert('§3.17: cancelled -> ready is refused for every role',
+    NOT EXISTS (SELECT 1 FROM t02_grid
+                 WHERE from_s = 'cancelled' AND to_s = 'ready' AND COALESCE(actual, false)));
+  PERFORM qros_t02.assert('§3.17: no transition OUT of a terminal state, for anybody',
+    NOT EXISTS (SELECT 1 FROM t02_grid
+                 WHERE from_s IN ('completed','cancelled') AND COALESCE(actual, false)));
+  PERFORM qros_t02.assert('§3.17: a NULL actor (not staff) is allowed nothing',
+    NOT EXISTS (SELECT 1
+                FROM (SELECT unnest(enum_range(NULL::public.order_status)) s) f,
+                     (SELECT unnest(enum_range(NULL::public.order_status)) s) t
+                WHERE COALESCE(public.order_transition_allowed(f.s, t.s, NULL), true)));
+
+  -- The suite must not be vacuous: SOMETHING has to be allowed.
+  SELECT count(*) INTO v_n FROM t02_grid WHERE COALESCE(actual, false);
+  PERFORM qros_t02.assert('§3.17: the matrix is not uniformly false (sanity)',
+    v_n > 0, format('%s allowed triples', v_n));
+END $t$;
+
+
+-- ---------------------------------------------------------------------------
+-- 7B. The predicate could be perfect and still never be consulted (that is
+--     exactly what F08 found). So drive every transition END TO END, as a real
+--     signed-in staff member, through an ordinary UPDATE — the same statement
+--     PostgREST issues for `PATCH /rest/v1/orders?id=eq.<x>`.
+--
+--     A refusal counts whether it arrives as an exception (the guard trigger) or
+--     as zero rows (RLS made the row invisible or unwritable); both leave the
+--     order in its original state, which is the property that matters. The
+--     mechanism is recorded either way, and the named F08 exploits below assert
+--     the exact error code as well.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION qros_t02.probe_transition(
+  p_from public.order_status,
+  p_to   public.order_status,
+  p_uid  uuid,
+  OUT o_allowed boolean, OUT o_state text, OUT o_msg text, OUT o_rows integer,
+  OUT o_final public.order_status)
+RETURNS record LANGUAGE plpgsql AS $fn$
+DECLARE v_id uuid := gen_random_uuid();
+BEGIN
+  PERFORM qros_t02.mk_order(v_id, p_from);
+  o_rows := 0;
+  BEGIN
+    o_rows := qros_t02.run_as(p_uid, 'authenticated', format(
+      'UPDATE public.orders SET status = %L%s WHERE id = %L',
+      p_to,
+      CASE WHEN p_to = 'cancelled' THEN ', cancellation_reason = ''t02 probe''' ELSE '' END,
+      v_id));
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS o_state = RETURNED_SQLSTATE, o_msg = MESSAGE_TEXT;
+    o_rows := 0;
+  END;
+  SELECT status INTO o_final FROM public.orders WHERE id = v_id;
+  o_allowed := (o_state IS NULL AND o_rows = 1 AND o_final = p_to);
+END $fn$;
+
+DO $t$
+DECLARE
+  r          record;
+  v_probe    record;
+  v_permit   text;
+  v_undecl   text;
+  v_gap      text;
+  v_stuck    text;
+  v_n        bigint;
+BEGIN
+  CREATE TEMP TABLE t02_behaviour (
+    from_s   public.order_status,
+    to_s     public.order_status,
+    actor    public.app_role,
+    spec     boolean,
+    declared boolean,
+    allowed  boolean,
+    final_s  public.order_status,
+    mech     text
+  ) ON COMMIT DROP;
+
+  FOR r IN
+    SELECT g.from_s, g.to_s, g.actor, g.spec, g.declared, a.uid
+    FROM t02_grid g
+    JOIN (VALUES
+            ('RESTAURANT_OWNER'::public.app_role, '02000000-0000-4000-8500-000000000001'::uuid),
+            ('MANAGER',                           '02000000-0000-4000-8500-000000000002'),
+            ('WAITER',                            '02000000-0000-4000-8500-000000000003'),
+            ('KITCHEN',                           '02000000-0000-4000-8500-000000000004')
+         ) a(role, uid) ON a.role = g.actor
+    WHERE g.from_s <> g.to_s
+    ORDER BY g.from_s, g.to_s, g.actor
+  LOOP
+    SELECT * INTO v_probe FROM qros_t02.probe_transition(r.from_s, r.to_s, r.uid);
+    INSERT INTO t02_behaviour
+    VALUES (r.from_s, r.to_s, r.actor, r.spec, r.declared,
+            v_probe.o_allowed, v_probe.o_final,
+            CASE WHEN v_probe.o_allowed THEN 'accepted'
+                 WHEN v_probe.o_state IS NOT NULL THEN v_probe.o_state || ' ' || v_probe.o_msg
+                 ELSE 'refused by RLS (0 rows)' END);
+  END LOOP;
+
+  SELECT count(*) INTO v_n FROM t02_behaviour;
+  PERFORM qros_t02.assert('every legal-and-illegal transition was driven end to end',
+    v_n = 168, format('%s attempts (7x6 pairs x 4 roles)', v_n));
+
+  -- (a) EXPLOITABLE: the server accepted something §3.17 forbids.
+  SELECT string_agg(format('%s->%s/%s', from_s, to_s, actor), ', ' ORDER BY from_s, to_s, actor)
+  INTO v_permit FROM t02_behaviour WHERE allowed AND NOT spec;
+  PERFORM qros_t02.assert('end to end: the server ACCEPTS nothing §3.17 forbids',
+    v_permit IS NULL, COALESCE('accepted: ' || v_permit, 'none'));
+
+  -- (b) BROKEN FEATURE: the server refused something §3.17 permits, and it is
+  --     not on the declared list.
+  SELECT string_agg(format('%s->%s/%s [%s]', from_s, to_s, actor, mech), ' | ' ORDER BY from_s, to_s, actor)
+  INTO v_undecl FROM t02_behaviour WHERE spec AND NOT allowed AND NOT declared;
+  PERFORM qros_t02.assert('end to end: the server ACCEPTS everything §3.17 permits',
+    v_undecl IS NULL, COALESCE('refused: ' || v_undecl, 'none'));
+
+  SELECT string_agg(format('%s->%s/%s [%s]', from_s, to_s, actor, mech), ' | ' ORDER BY from_s, to_s, actor)
+  INTO v_gap FROM t02_behaviour WHERE spec AND NOT allowed AND declared;
+  IF v_gap IS NOT NULL THEN
+    PERFORM qros_t02.record('end to end: declared §3.17 gap reproduced', 'GAP', v_gap);
+  END IF;
+
+  -- (c) a refused transition must leave the order EXACTLY where it was. A guard
+  --     that raises after a partial write would be worse than no guard.
+  SELECT string_agg(format('%s->%s/%s ended as %s', from_s, to_s, actor, final_s), ', ')
+  INTO v_stuck FROM t02_behaviour WHERE NOT allowed AND final_s IS DISTINCT FROM from_s;
+  PERFORM qros_t02.assert('end to end: a refused transition never moves the order',
+    v_stuck IS NULL, COALESCE(v_stuck, 'none'));
+
+  SELECT count(*) INTO v_n FROM t02_behaviour WHERE allowed;
+  PERFORM qros_t02.assert('end to end: the run is not vacuous (some transitions succeed)',
+    v_n > 0, format('%s accepted', v_n));
+END $t$;
+
+-- The named F08 exploits, each asserting the documented error, so that a
+-- regression names itself instead of vanishing into an aggregate.
+DO $t$
+DECLARE p record;
+BEGIN
+  -- EXPLOIT 1: a KITCHEN account cancels the ticket off the pass.
+  SELECT * INTO p FROM qros_t02.probe_transition('preparing','cancelled',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('F08/1: KITCHEN cannot cancel a preparing order',
+    NOT p.o_allowed AND p.o_msg = 'QR040_INVALID_STATUS_TRANSITION' AND p.o_state = 'PT409',
+    format('%s %s', p.o_state, p.o_msg));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('confirmed','cancelled',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('F08/1: KITCHEN cannot cancel a confirmed order',
+    NOT p.o_allowed AND p.o_msg = 'QR040_INVALID_STATUS_TRANSITION' AND p.o_state = 'PT409',
+    format('%s %s', p.o_state, p.o_msg));
+
+  -- EXPLOIT 2: a WAITER cancels an order the kitchen has already plated.
+  SELECT * INTO p FROM qros_t02.probe_transition('ready','cancelled',
+    '02000000-0000-4000-8500-000000000003');
+  PERFORM qros_t02.assert('F08/2: WAITER cannot cancel a ready order',
+    NOT p.o_allowed AND p.o_msg = 'QR040_INVALID_STATUS_TRANSITION' AND p.o_state = 'PT409',
+    format('%s %s', p.o_state, p.o_msg));
+
+  -- EXPLOIT 3: a KITCHEN account closes out orders it never served.
+  SELECT * INTO p FROM qros_t02.probe_transition('ready','delivered',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('F08/3: KITCHEN cannot mark an order delivered',
+    NOT p.o_allowed AND p.o_msg = 'QR040_INVALID_STATUS_TRANSITION' AND p.o_state = 'PT409',
+    format('%s %s', p.o_state, p.o_msg));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('delivered','completed',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('F08/3: KITCHEN cannot complete an order',
+    NOT p.o_allowed, format('%s %s rows=%s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-'), p.o_rows));
+
+  -- The floor does not cook: a waiter cannot declare food ready.
+  SELECT * INTO p FROM qros_t02.probe_transition('preparing','ready',
+    '02000000-0000-4000-8500-000000000003');
+  PERFORM qros_t02.assert('§3.17: WAITER cannot mark food ready',
+    NOT p.o_allowed AND p.o_msg = 'QR040_INVALID_STATUS_TRANSITION' AND p.o_state = 'PT409',
+    format('%s %s', p.o_state, p.o_msg));
+
+  -- Terminal is terminal, even for the owner. These are refused by the
+  -- structural graph (ERRCODE 'ORD01'), before the role matrix is consulted.
+  SELECT * INTO p FROM qros_t02.probe_transition('completed','preparing',
+    '02000000-0000-4000-8500-000000000001');
+  PERFORM qros_t02.assert('brief §26: completed -> preparing is refused (owner)',
+    NOT p.o_allowed AND p.o_state = 'ORD01', format('%s %s', p.o_state, p.o_msg));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('cancelled','ready',
+    '02000000-0000-4000-8500-000000000001');
+  PERFORM qros_t02.assert('brief §26: cancelled -> ready is refused (owner)',
+    NOT p.o_allowed AND p.o_state = 'ORD01', format('%s %s', p.o_state, p.o_msg));
+
+  -- Skipping a step is not a shortcut.
+  SELECT * INTO p FROM qros_t02.probe_transition('pending','ready',
+    '02000000-0000-4000-8500-000000000001');
+  PERFORM qros_t02.assert('graph: pending -> ready (skipping states) is refused',
+    NOT p.o_allowed AND p.o_state = 'ORD01', format('%s %s', p.o_state, p.o_msg));
+
+  -- Positive controls: the roles that SHOULD be able to work, can.
+  SELECT * INTO p FROM qros_t02.probe_transition('pending','confirmed',
+    '02000000-0000-4000-8500-000000000003');
+  PERFORM qros_t02.assert('control: WAITER accepts a pending ticket', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('confirmed','preparing',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('control: KITCHEN starts cooking', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('preparing','ready',
+    '02000000-0000-4000-8500-000000000004');
+  PERFORM qros_t02.assert('control: KITCHEN marks food ready', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('ready','delivered',
+    '02000000-0000-4000-8500-000000000003');
+  PERFORM qros_t02.assert('control: WAITER serves the food', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('delivered','completed',
+    '02000000-0000-4000-8500-000000000003');
+  PERFORM qros_t02.assert('control: WAITER closes the order', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+
+  SELECT * INTO p FROM qros_t02.probe_transition('ready','cancelled',
+    '02000000-0000-4000-8500-000000000002');
+  PERFORM qros_t02.assert('control: MANAGER may still cancel a ready order', p.o_allowed,
+    format('%s %s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-')));
+END $t$;
+
+-- An authenticated user with a valid JWT but NO staff row anywhere is not an
+-- actor at all (doc 02 §3.18: "if v_actor is null ... QR050_FORBIDDEN").
+DO $t$
+DECLARE p record;
+BEGIN
+  SELECT * INTO p FROM qros_t02.probe_transition('pending','confirmed',
+    '02000000-0000-4000-8500-000000000005');
+  PERFORM qros_t02.assert('a signed-in NON-STAFF user cannot move an order',
+    NOT p.o_allowed AND p.o_final = 'pending',
+    format('%s %s rows=%s final=%s', COALESCE(p.o_state,'-'), COALESCE(p.o_msg,'-'),
+           p.o_rows, p.o_final));
+END $t$;
+
+-- Cancelling always costs a reason (doc 02 §3.18 QR042 / ERRCODE 'ORD04').
+DO $t$
+DECLARE v_id uuid := gen_random_uuid(); v_state text; v_msg text;
+BEGIN
+  PERFORM qros_t02.mk_order(v_id, 'pending');
+  BEGIN
+    PERFORM qros_t02.run_as('02000000-0000-4000-8500-000000000003', 'authenticated',
+      format('UPDATE public.orders SET status = ''cancelled'' WHERE id = %L', v_id));
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+  END;
+  PERFORM qros_t02.assert('cancelling without a reason is refused',
+    v_state IS NOT NULL
+    AND (SELECT status FROM public.orders WHERE id = v_id) = 'pending',
+    format('%s %s', COALESCE(v_state,'-'), COALESCE(v_msg,'-')));
+END $t$;
+
+
+-- =============================================================================
+-- PART 8 — THE AUDIT TRAIL NAMES THE ACTOR (doc 01 §7.7b, finding F08/F10)
+--
+-- F08: "The audit trail records these as legitimate: orders_log_status_change
+-- writes changed_by_role from current_setting('app.actor_role'), which a
+-- PostgREST caller never sets, so the row is stamped 'system'/NULL rather than
+-- naming the kitchen account."
+--
+-- A state machine that is enforced but not attributed is only half a control:
+-- you can stop the wrong move, but you cannot say who tried.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '8. audit attribution';
+
+DO $t$
+DECLARE
+  v_doc   jsonb;
+  v_ord   public.orders%ROWTYPE;
+  v_h     public.order_status_history%ROWTYPE;
+BEGIN
+  -- A guest places the order: the creation row is the CUSTOMER's, and the schema
+  -- forbids it from naming a person (ck_order_status_history_customer_actor).
+  v_doc := qros_t02.call_json(NULL, 'anon', $q$
+    SELECT public.public_place_order(
+      'T02TOK0000000000000014',
+      '[{"menu_item_id":"02000000-0000-4000-8300-000000000001","quantity":1}]'::jsonb,
+      NULL, NULL)$q$);
+  SELECT * INTO v_ord FROM public.orders WHERE public_code = v_doc ->> 'public_code';
+
+  SELECT * INTO v_h FROM public.order_status_history
+   WHERE order_id = v_ord.id ORDER BY created_at, id LIMIT 1;
+  PERFORM qros_t02.assert('history: the creation row is attributed to the customer',
+    v_h.new_status = 'pending' AND v_h.changed_by_kind = 'customer'
+    AND v_h.changed_by IS NULL AND v_h.changed_by_role IS NULL,
+    format('%s / kind=%s / by=%s / role=%s',
+           v_h.new_status, v_h.changed_by_kind, v_h.changed_by, v_h.changed_by_role));
+
+  -- The WAITER accepts it, through the ordinary PATCH-equivalent UPDATE.
+  PERFORM qros_t02.run_as('02000000-0000-4000-8500-000000000003', 'authenticated',
+    format('UPDATE public.orders SET status = ''confirmed'' WHERE id = %L', v_ord.id));
+
+  SELECT * INTO v_h FROM public.order_status_history
+   WHERE order_id = v_ord.id AND new_status = 'confirmed'
+   ORDER BY created_at DESC, id DESC LIMIT 1;
+
+  PERFORM qros_t02.assert('history: a staff transition is NOT attributed to ''system''',
+    v_h.changed_by_kind = 'staff',
+    format('kind=%s', v_h.changed_by_kind));
+  PERFORM qros_t02.assert('history: the staff transition names the acting PROFILE',
+    v_h.changed_by = '02000000-0000-4000-8500-000000000003',
+    format('changed_by=%s', v_h.changed_by));
+  PERFORM qros_t02.assert('history: the staff transition records the acting ROLE',
+    v_h.changed_by_role = 'WAITER', format('role=%s', v_h.changed_by_role));
+  PERFORM qros_t02.assert('history: previous_status is recorded (pending -> confirmed)',
+    v_h.previous_status = 'pending' AND v_h.new_status = 'confirmed',
+    format('%s -> %s', v_h.previous_status, v_h.new_status));
+
+  -- F10's other half: the order row itself must name the staff member.
+  SELECT * INTO v_ord FROM public.orders WHERE id = v_ord.id;
+  PERFORM qros_t02.assert('F10: orders.confirmed_by_staff_id is stamped, not left NULL',
+    v_ord.confirmed_by_staff_id = '02000000-0000-4000-8600-000000000003',
+    format('confirmed_by_staff_id=%s', v_ord.confirmed_by_staff_id));
+
+  -- A different role, so the attribution is not a constant.
+  PERFORM qros_t02.run_as('02000000-0000-4000-8500-000000000004', 'authenticated',
+    format('UPDATE public.orders SET status = ''preparing'' WHERE id = %L', v_ord.id));
+  SELECT * INTO v_h FROM public.order_status_history
+   WHERE order_id = v_ord.id AND new_status = 'preparing'
+   ORDER BY created_at DESC, id DESC LIMIT 1;
+  PERFORM qros_t02.assert('history: a KITCHEN transition names the kitchen account',
+    v_h.changed_by_kind = 'staff'
+    AND v_h.changed_by = '02000000-0000-4000-8500-000000000004'
+    AND v_h.changed_by_role = 'KITCHEN',
+    format('kind=%s by=%s role=%s', v_h.changed_by_kind, v_h.changed_by, v_h.changed_by_role));
+
+  -- The history table is append-only (doc 01 §7.7b): an actor cannot launder
+  -- their own row afterwards.
+  PERFORM qros_t02.expect_error(
+    'history: a staff member cannot rewrite an audit row',
+    format($q$UPDATE public.order_status_history
+                 SET changed_by_role = 'RESTAURANT_OWNER' WHERE id = %L$q$, v_h.id),
+    NULL, NULL, '02000000-0000-4000-8500-000000000002', 'authenticated');
+  PERFORM qros_t02.expect_error(
+    'history: a staff member cannot delete an audit row',
+    format('DELETE FROM public.order_status_history WHERE id = %L', v_h.id),
+    NULL, NULL, '02000000-0000-4000-8500-000000000002', 'authenticated');
+
+  PERFORM qros_t02.assert('history: the audit row survived both attempts',
+    EXISTS (SELECT 1 FROM public.order_status_history
+             WHERE id = v_h.id AND changed_by_role = 'KITCHEN'));
+END $t$;
+
+
+-- =============================================================================
+-- PART 9 — WAITER CALLS: SPAM IS REFUSED, BUT A TABLE IS NEVER WEDGED
+--
+-- doc 02 §1.8 / §5.3 and finding F16. Two opposite failure modes, both real:
+--   * no cooldown  -> the waiter console is a doorbell anyone can hold down;
+--   * no expiry    -> ONE abandoned call holds uq_waiter_calls_open_per_table
+--                     forever and that table can never call a waiter again.
+-- =============================================================================
+UPDATE qros_t02.part SET cur = '9. waiter calls';
+
+-- 9.1 / 9.2 — the cooldown.
+DO $t$
+DECLARE v jsonb; v_n bigint;
+BEGIN
+  v := qros_t02.call_json(NULL, 'anon',
+    $q$SELECT public.public_call_waiter('T02TOK0000000000000011','call_waiter')$q$);
+  PERFORM qros_t02.assert('waiter call: the first call is accepted',
+    v ->> 'status' = 'pending', v::text);
+
+  SELECT count(*) INTO v_n FROM public.waiter_calls
+   WHERE table_id = '02000000-0000-4000-8400-000000000011' AND status = 'pending';
+  PERFORM qros_t02.assert('waiter call: exactly one open call exists', v_n = 1,
+    format('%s', v_n));
+
+  PERFORM qros_t02.assert('waiter call: the per-table clock was stamped by the server',
+    (SELECT last_waiter_call_at IS NOT NULL FROM public.tables
+      WHERE id = '02000000-0000-4000-8400-000000000011'));
+END $t$;
+
+SELECT qros_t02.expect_error(
+  'waiter call: a second call inside the cooldown window is refused',
+  $q$SELECT public.public_call_waiter('T02TOK0000000000000011','call_waiter')$q$,
+  'QR011_WAITER_CALL_COOLDOWN', 'PT429', NULL, 'anon');
+
+SELECT qros_t02.expect_error(
+  'waiter call: an unknown reason is refused',
+  $q$SELECT public.public_call_waiter('T02TOK0000000000000012','give_me_free_food')$q$,
+  'QR023_INVALID_PAYLOAD', 'PT422', NULL, 'anon');
+
+-- 9.3 — past the cooldown but the call is still genuinely open: the one-open-
+--       call-per-table rule must still hold, or the expiry valve has simply
+--       disabled the anti-spam control.
+DO $t$
+BEGIN
+  INSERT INTO public.waiter_calls
+    (restaurant_id, branch_id, table_id, reason, status, created_at, updated_at)
+  VALUES ('02000000-0000-4000-8000-000000000001',
+          '02000000-0000-4000-8100-000000000001',
+          '02000000-0000-4000-8400-000000000013',
+          'call_waiter', 'pending', now() - interval '5 minutes', now() - interval '5 minutes');
+  UPDATE public.tables SET last_waiter_call_at = now() - interval '5 minutes'
+   WHERE id = '02000000-0000-4000-8400-000000000013';
+END $t$;
+
+SELECT qros_t02.expect_error(
+  'waiter call: a still-open call blocks a new one (anti-spam intact)',
+  $q$SELECT public.public_call_waiter('T02TOK0000000000000013','call_waiter')$q$,
+  'QR012_WAITER_CALL_ALREADY_OPEN', 'PT409', NULL, 'anon');
+
+-- 9.4 — the abandoned call. branches.waiter_call_expiry_minutes is 30; this one
+--       is 40 minutes old and nobody ever acknowledged it. Without an expiry
+--       path the table is wedged permanently (F16).
+DO $t$
+DECLARE v jsonb; v_expired bigint; v_open bigint;
+BEGIN
+  INSERT INTO public.waiter_calls
+    (id, restaurant_id, branch_id, table_id, reason, status, created_at, updated_at)
+  VALUES ('02000000-0000-4000-8800-000000000001',
+          '02000000-0000-4000-8000-000000000001',
+          '02000000-0000-4000-8100-000000000001',
+          '02000000-0000-4000-8400-000000000012',
+          'call_waiter', 'pending', now() - interval '40 minutes', now() - interval '40 minutes');
+  UPDATE public.tables SET last_waiter_call_at = now() - interval '40 minutes'
+   WHERE id = '02000000-0000-4000-8400-000000000012';
+
+  BEGIN
+    v := qros_t02.call_json(NULL, 'anon',
+      $q$SELECT public.public_call_waiter('T02TOK0000000000000012','request_bill')$q$);
+  EXCEPTION WHEN OTHERS THEN
+    v := NULL;
+  END;
+
+  PERFORM qros_t02.assert(
+    'waiter call: an ABANDONED open call does not wedge the table forever (F16)',
+    v IS NOT NULL AND v ->> 'status' = 'pending', COALESCE(v::text, 'refused'));
+
+  SELECT count(*) FILTER (WHERE status = 'expired'),
+         count(*) FILTER (WHERE status IN ('pending','acknowledged'))
+  INTO v_expired, v_open
+  FROM public.waiter_calls WHERE table_id = '02000000-0000-4000-8400-000000000012';
+
+  PERFORM qros_t02.assert('waiter call: the abandoned call was retired as ''expired''',
+    v_expired = 1 AND (SELECT status FROM public.waiter_calls
+                        WHERE id = '02000000-0000-4000-8800-000000000001') = 'expired',
+    format('%s expired', v_expired));
+  PERFORM qros_t02.assert('waiter call: exactly one call is open again afterwards',
+    v_open = 1, format('%s open', v_open));
+END $t$;
+
+-- 9.5 — the same, for a call a waiter acknowledged and then walked away from.
+DO $t$
+DECLARE v jsonb;
+BEGIN
+  INSERT INTO public.waiter_calls
+    (restaurant_id, branch_id, table_id, reason, status,
+     acknowledged_at, created_at, updated_at)
+  VALUES ('02000000-0000-4000-8000-000000000001',
+          '02000000-0000-4000-8100-000000000001',
+          '02000000-0000-4000-8400-000000000016',
+          'call_waiter', 'acknowledged',
+          now() - interval '99 minutes', now() - interval '99 minutes',
+          now() - interval '99 minutes');
+  UPDATE public.tables SET last_waiter_call_at = now() - interval '99 minutes'
+   WHERE id = '02000000-0000-4000-8400-000000000016';
+
+  BEGIN
+    v := qros_t02.call_json(NULL, 'anon',
+      $q$SELECT public.public_call_waiter('T02TOK0000000000000016','clean_table')$q$);
+  EXCEPTION WHEN OTHERS THEN
+    v := NULL;
+  END;
+
+  PERFORM qros_t02.assert(
+    'waiter call: an ACKNOWLEDGED-then-abandoned call also ages out',
+    v IS NOT NULL AND v ->> 'status' = 'pending', COALESCE(v::text, 'refused'));
+END $t$;
+
+-- 9.6 — F13's second exploit, restated as a property of this part: a client
+--       must not be able to clear the cooldown clock it just tripped.
+SELECT qros_t02.expect_error(
+  'waiter call: a MANAGER cannot reset the per-table cooldown clocks (F13)',
+  $q$UPDATE public.tables
+        SET last_waiter_call_at = NULL, last_order_at = NULL
+      WHERE id = '02000000-0000-4000-8400-000000000011'$q$,
+  'QR053_IMMUTABLE_COLUMN', 'PT403',
+  '02000000-0000-4000-8500-000000000002', 'authenticated');
+
+SELECT qros_t02.expect_error(
+  'waiter call: a MANAGER cannot hand-pick a QR token (F13)',
+  $q$UPDATE public.tables SET qr_token = 'aaaaaaaaaaaaaaaaaaaaaa'
+      WHERE id = '02000000-0000-4000-8400-000000000011'$q$,
+  'QR053_IMMUTABLE_COLUMN', 'PT403',
+  '02000000-0000-4000-8500-000000000002', 'authenticated');
