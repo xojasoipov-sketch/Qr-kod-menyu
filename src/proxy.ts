@@ -1,5 +1,5 @@
 /**
- * src/middleware.ts — session refresh, surface selection, locale promotion, coarse gate.
+ * src/proxy.ts — session refresh, surface selection, locale promotion, coarse gate.
  * Source: 05-app-structure.md §4.1–§4.3; 04-design-system.md §0 amendment 1 and C-1.
  *
  * FOUR THINGS HAPPEN HERE, IN THIS ORDER, AND THE ORDER MATTERS.
@@ -106,7 +106,7 @@ interface PendingCookie {
   options: CookieOptions;
 }
 
-export async function middleware(request: NextRequest): Promise<NextResponse> {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   const surface = surfaceFor(pathname);
 
