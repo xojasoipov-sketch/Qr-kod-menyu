@@ -249,7 +249,7 @@ export function formatMoney(
   const label = CURRENCY_LABELS[code]?.[locale] ?? code;
   return locale === 'en' && PREFIX_IN_EN.has(code)
     ? `${label}${digits}`
-    : `${digits} ${label}`;
+    : `${digits}\u00A0${label}`;
 }
 
 /** `formatMoney` for a caller that has no tenant `currency_decimals` to hand. */
@@ -270,6 +270,19 @@ function toDate(value: Instant): Date {
   return date;
 }
 
+/**
+ * Date formatting uses `en-GB` rather than `en-US`, and only here: doc 07 §5.5 specifies
+ * "1 September 2026" — day first, no comma — because the English of this product is
+ * British-neutral, and because a day-first date is what an Uzbek or Russian reader
+ * switching to English expects to see beside the other two locales. Every other `Intl`
+ * call keeps the frozen `BCP47` tag, where en-US and en-GB agree anyway.
+ */
+const DATE_TAGS: Readonly<Record<Locale, string>> = {
+  uz: BCP47.uz,
+  ru: BCP47.ru,
+  en: 'en-GB',
+};
+
 const dateTimeCache = new Map<string, Intl.DateTimeFormat>();
 
 function cachedDateTime(
@@ -281,7 +294,7 @@ function cachedDateTime(
   const cacheKey = `${locale}|${timeZone}|${key}`;
   const hit = dateTimeCache.get(cacheKey);
   if (hit) return hit;
-  const created = new Intl.DateTimeFormat(BCP47[locale], { ...init, timeZone });
+  const created = new Intl.DateTimeFormat(DATE_TAGS[locale], { ...init, timeZone });
   dateTimeCache.set(cacheKey, created);
   return created;
 }

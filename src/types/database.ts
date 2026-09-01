@@ -168,7 +168,7 @@ type Computed = 'total' | 'total_per_unit';
 /* 6.1 restaurants                                                     */
 /* ------------------------------------------------------------------ */
 
-export interface RestaurantRow {
+export type RestaurantRow = {
   id: string;
   name: string;
   slug: string;
@@ -201,7 +201,7 @@ export type RestaurantUpdate = Updatable<RestaurantRow, 'slug'>;
 /* 6.2 branches                                                        */
 /* ------------------------------------------------------------------ */
 
-export interface BranchRow {
+export type BranchRow = {
   id: string;
   restaurant_id: string;
   name: string;
@@ -235,7 +235,7 @@ export type BranchUpdate = Updatable<BranchRow, 'restaurant_id'>;
 /* 6.3 profiles                                                        */
 /* ------------------------------------------------------------------ */
 
-export interface ProfileRow {
+export type ProfileRow = {
   /** Equals auth.users.id. Not defaulted. */
   id: string;
   email: string | null;
@@ -258,7 +258,7 @@ export type ProfileUpdate = Updatable<ProfileRow, 'is_platform_admin'>;
 /* 6.4 staff                                                           */
 /* ------------------------------------------------------------------ */
 
-export interface StaffRow {
+export type StaffRow = {
   id: string;
   restaurant_id: string;
   /** NULL for RESTAURANT_OWNER and restaurant-wide MANAGER; NOT NULL for WAITER/KITCHEN. */
@@ -281,7 +281,7 @@ export type StaffUpdate = Updatable<StaffRow, 'restaurant_id' | 'profile_id'>;
 /* 6.5 tables                                                          */
 /* ------------------------------------------------------------------ */
 
-export interface TableRow {
+export type TableRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -316,7 +316,7 @@ export type TableUpdate = Updatable<
 /* 6.6 qr_token_history                                                */
 /* ------------------------------------------------------------------ */
 
-export interface QrTokenHistoryRow {
+export type QrTokenHistoryRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -335,7 +335,7 @@ export interface QrTokenHistoryRow {
 /* 6.7 menu_categories                                                 */
 /* ------------------------------------------------------------------ */
 
-export interface MenuCategoryRow {
+export type MenuCategoryRow = {
   id: string;
   restaurant_id: string;
   /** NULL = the category belongs to every branch of the restaurant. */
@@ -359,7 +359,7 @@ export type MenuCategoryUpdate = Updatable<MenuCategoryRow, 'restaurant_id'>;
 /* 6.8 menu_items                                                      */
 /* ------------------------------------------------------------------ */
 
-export interface MenuItemRow {
+export type MenuItemRow = {
   id: string;
   restaurant_id: string;
   /** NULL = available at every branch. */
@@ -403,7 +403,7 @@ export type MenuItemUpdate = Updatable<MenuItemRow, 'restaurant_id'>;
 /* 6.9 menu_item_options                                               */
 /* ------------------------------------------------------------------ */
 
-export interface MenuItemOptionRow {
+export type MenuItemOptionRow = {
   id: string;
   restaurant_id: string;
   menu_item_id: string;
@@ -438,7 +438,7 @@ export type MenuItemOptionUpdate = Updatable<
 /* 6.10 promotions                                                     */
 /* ------------------------------------------------------------------ */
 
-export interface PromotionRow {
+export type PromotionRow = {
   id: string;
   restaurant_id: string;
   branch_id: string | null;
@@ -466,7 +466,7 @@ export type PromotionUpdate = Updatable<PromotionRow, 'restaurant_id'>;
 /* 6.11 promotion_items                                                */
 /* ------------------------------------------------------------------ */
 
-export interface PromotionItemRow {
+export type PromotionItemRow = {
   id: string;
   restaurant_id: string;
   promotion_id: string;
@@ -483,7 +483,7 @@ export type PromotionItemInsert = Insertable<
 /* ------------------------------------------------------------------ */
 
 /** No id column. PK is (branch_id, business_date). Written only by the order-number trigger. */
-export interface BranchOrderCounterRow {
+export type BranchOrderCounterRow = {
   branch_id: string;
   /** 'YYYY-MM-DD' in the branch timezone. */
   business_date: string;
@@ -496,7 +496,7 @@ export interface BranchOrderCounterRow {
 /* 6.13 orders                                                         */
 /* ------------------------------------------------------------------ */
 
-export interface OrderRow {
+export type OrderRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -559,7 +559,7 @@ export type OrderStatusUpdate = Pick<OrderRow, 'status'> &
 /* 6.14 order_items                                                    */
 /* ------------------------------------------------------------------ */
 
-export interface OrderItemRow {
+export type OrderItemRow = {
   id: string;
   restaurant_id: string;
   order_id: string;
@@ -593,7 +593,7 @@ export type OrderItemInsert = Omit<
 /* 6.15 order_item_options                                             */
 /* ------------------------------------------------------------------ */
 
-export interface OrderItemOptionRow {
+export type OrderItemOptionRow = {
   id: string;
   restaurant_id: string;
   order_id: string;
@@ -623,7 +623,7 @@ export type OrderItemOptionInsert = Omit<
 /* 6.16 order_status_history                                           */
 /* ------------------------------------------------------------------ */
 
-export interface OrderStatusHistoryRow {
+export type OrderStatusHistoryRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -646,7 +646,7 @@ export interface OrderStatusHistoryRow {
 /* 6.17 waiter_calls                                                   */
 /* ------------------------------------------------------------------ */
 
-export interface WaiterCallRow {
+export type WaiterCallRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -670,7 +670,7 @@ export type WaiterCallUpdate = Pick<WaiterCallRow, 'status'>;
 /* 6.18 notifications                                                  */
 /* ------------------------------------------------------------------ */
 
-export interface NotificationRow {
+export type NotificationRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
@@ -695,7 +695,7 @@ export interface NotificationRow {
 /* ------------------------------------------------------------------ */
 
 /** Junction with a natural PK (notification_id, staff_id). No id column. */
-export interface NotificationReadRow {
+export type NotificationReadRow = {
   notification_id: string;
   staff_id: string;
   restaurant_id: string;
@@ -710,30 +710,30 @@ export type NotificationReadInsert =
 /* The Database interface for createClient<Database>()                 */
 /* ------------------------------------------------------------------ */
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
-      restaurants:           { Row: RestaurantRow;        Insert: RestaurantInsert;        Update: RestaurantUpdate };
-      branches:              { Row: BranchRow;            Insert: BranchInsert;            Update: BranchUpdate };
-      profiles:              { Row: ProfileRow;           Insert: ProfileInsert;           Update: ProfileUpdate };
-      staff:                 { Row: StaffRow;             Insert: StaffInsert;             Update: StaffUpdate };
-      tables:                { Row: TableRow;             Insert: TableInsert;             Update: TableUpdate };
-      qr_token_history:      { Row: QrTokenHistoryRow;    Insert: never;                   Update: never };
-      menu_categories:       { Row: MenuCategoryRow;      Insert: MenuCategoryInsert;      Update: MenuCategoryUpdate };
-      menu_items:            { Row: MenuItemRow;          Insert: MenuItemInsert;          Update: MenuItemUpdate };
-      menu_item_options:     { Row: MenuItemOptionRow;    Insert: MenuItemOptionInsert;    Update: MenuItemOptionUpdate };
-      promotions:            { Row: PromotionRow;         Insert: PromotionInsert;         Update: PromotionUpdate };
-      promotion_items:       { Row: PromotionItemRow;     Insert: PromotionItemInsert;     Update: never };
-      branch_order_counters: { Row: BranchOrderCounterRow; Insert: never;                  Update: never };
-      orders:                { Row: OrderRow;             Insert: never;                   Update: OrderStatusUpdate };
-      order_items:           { Row: OrderItemRow;         Insert: OrderItemInsert;         Update: never };
-      order_item_options:    { Row: OrderItemOptionRow;   Insert: OrderItemOptionInsert;   Update: never };
-      order_status_history:  { Row: OrderStatusHistoryRow; Insert: never;                  Update: never };
-      waiter_calls:          { Row: WaiterCallRow;        Insert: never;                   Update: WaiterCallUpdate };
-      notifications:         { Row: NotificationRow;      Insert: never;                   Update: never };
-      notification_reads:    { Row: NotificationReadRow;  Insert: NotificationReadInsert;  Update: never };
+      restaurants:           { Row: RestaurantRow;        Insert: RestaurantInsert;        Update: RestaurantUpdate; Relationships: [] };
+      branches:              { Row: BranchRow;            Insert: BranchInsert;            Update: BranchUpdate; Relationships: [] };
+      profiles:              { Row: ProfileRow;           Insert: ProfileInsert;           Update: ProfileUpdate; Relationships: [] };
+      staff:                 { Row: StaffRow;             Insert: StaffInsert;             Update: StaffUpdate; Relationships: [] };
+      tables:                { Row: TableRow;             Insert: TableInsert;             Update: TableUpdate; Relationships: [] };
+      qr_token_history:      { Row: QrTokenHistoryRow;    Insert: never;                   Update: never; Relationships: [] };
+      menu_categories:       { Row: MenuCategoryRow;      Insert: MenuCategoryInsert;      Update: MenuCategoryUpdate; Relationships: [] };
+      menu_items:            { Row: MenuItemRow;          Insert: MenuItemInsert;          Update: MenuItemUpdate; Relationships: [] };
+      menu_item_options:     { Row: MenuItemOptionRow;    Insert: MenuItemOptionInsert;    Update: MenuItemOptionUpdate; Relationships: [] };
+      promotions:            { Row: PromotionRow;         Insert: PromotionInsert;         Update: PromotionUpdate; Relationships: [] };
+      promotion_items:       { Row: PromotionItemRow;     Insert: PromotionItemInsert;     Update: never; Relationships: [] };
+      branch_order_counters: { Row: BranchOrderCounterRow; Insert: never;                  Update: never; Relationships: [] };
+      orders:                { Row: OrderRow;             Insert: never;                   Update: OrderStatusUpdate; Relationships: [] };
+      order_items:           { Row: OrderItemRow;         Insert: OrderItemInsert;         Update: never; Relationships: [] };
+      order_item_options:    { Row: OrderItemOptionRow;   Insert: OrderItemOptionInsert;   Update: never; Relationships: [] };
+      order_status_history:  { Row: OrderStatusHistoryRow; Insert: never;                  Update: never; Relationships: [] };
+      waiter_calls:          { Row: WaiterCallRow;        Insert: never;                   Update: WaiterCallUpdate; Relationships: [] };
+      notifications:         { Row: NotificationRow;      Insert: never;                   Update: never; Relationships: [] };
+      notification_reads:    { Row: NotificationReadRow;  Insert: NotificationReadInsert;  Update: never; Relationships: [] };
     };
-    Views: Record<never, never>;
+    Views: Record<string, never>;
     Functions: {
       public_resolve_table:     { Args: { p_token: string }; Returns: Json };
       public_get_menu:          { Args: { p_token: string }; Returns: Json };
@@ -767,6 +767,6 @@ export interface Database {
       notification_type: NotificationType;
       app_locale: AppLocale;
     };
-    CompositeTypes: Record<never, never>;
+    CompositeTypes: Record<string, never>;
   };
 }
