@@ -50,7 +50,21 @@
 -- writers below that need it set the GUC transaction-locally with the same key
 -- and values 20260901001300_public_api.sql already uses ('app.guard_bypass' ->
 -- 'orders' / 'tables') and clear it again immediately, so the window is one
--- statement wide. anon can execute nothing that sets it.
+-- statement wide. anon can execute nothing that sets it. Verified against
+-- 20260901001500_guard_triggers.sql: trg_orders_guard and trg_tables_guard both
+-- test COALESCE(current_setting('app.guard_bypass', true), '') = 'orders' /
+-- 'tables', and a direct client UPDATE of tables.qr_token or of orders.subtotal
+-- still raises QR053 immediately after one of these RPCs runs in the same
+-- transaction.
+--
+-- One cross-file interaction worth naming: 20260901001500 supersedes
+-- orders_status_guard() with an actor-aware body that applies the §3.17 role
+-- matrix whenever auth.uid() is non-NULL. public_cancel_order is therefore a
+-- pure customer path only when the caller carries no JWT — which is how the app
+-- reaches it (doc 03 §2.2: the /t/** public client sends no cookies). A signed-in
+-- staff member scanning their own table's QR is evaluated as staff, not as a
+-- guest, and is refused unless their role may cancel from that status. That is
+-- the safer of the two readings and is left as-is.
 --
 -- !! DEPLOYMENT NOTE (F12, second half) !!
 -- 20260901009900_privilege_baseline_reassert.sql runs after this file and does

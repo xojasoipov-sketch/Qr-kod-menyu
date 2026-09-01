@@ -10,7 +10,9 @@
 --   §5.2 Order-spam supporting schema (per-table cooldown clock, idempotency
 --        key, duplicate-payload fingerprint and their indexes)
 --   §5.3 Waiter-call-spam supporting schema + app_private.expire_waiter_calls()
---        and its pg_cron job
+--        and its pg_cron job, plus the scheduler-independent inline expiry
+--        (app_private.expire_waiter_calls_for_table + trg_waiter_calls_autoexpire)
+--        that keeps §5.3 correct when that job was never scheduled — closes F16
 --   §7.1 supabase_realtime publication membership for the staff live screens
 --   §7.2 public.order_topic_is_valid(text) + RLS on realtime.messages
 --
@@ -104,7 +106,7 @@ COMMENT ON TABLE app_private.security_events IS
   'Doc 02 §4.8. Append-only audit sink for security-relevant events. Recorded '
   'kinds: qr_token.rotated, order_item.voided, staff.role_changed, '
   'profile.super_admin_changed, auth.failed_resolve_burst, ratelimit.tripped, '
-  'policy.violation. No policies and no grants, by design.';
+  'policy.violation, cron.unscheduled. No policies and no grants, by design.';
 
 
 -- =============================================================================
@@ -342,7 +344,108 @@ COMMENT ON FUNCTION app_private.expire_waiter_calls() IS
   'Doc 02 §5.3. Ages out open waiter calls (pending + acknowledged) older than '
   'branches.waiter_call_expiry_minutes so uq_waiter_calls_open_per_table can '
   'never wedge a table''s CALL WAITER button. Scheduled every 5 minutes via '
-  'pg_cron. Returns the number of calls expired.';
+  'pg_cron WHEN pg_cron exists — which section 5 cannot guarantee, so §4b''s '
+  'trg_waiter_calls_autoexpire performs the same expiry inline on the write '
+  'path (F16). Returns the number of calls expired.';
+
+
+-- =============================================================================
+-- 4b. §5.3 — the scheduler-independent safety valve            (closes F16)
+--
+-- Everything above assumes something calls expire_waiter_calls(). Section 5
+-- below tries to make pg_cron do that and is allowed to fail, which means the
+-- assumption can quietly evaporate: F16 verified a completed chain in which
+-- pg_extension holds no pg_cron row and no job is registered. The consequence
+-- is not cosmetic. uq_waiter_calls_open_per_table treats pending AND
+-- acknowledged as open, so ONE call that staff never resolve permanently blocks
+-- that table from ever calling a waiter again — every later tap is a 23505 that
+-- public_call_waiter reports as QR012_WAITER_CALL_ALREADY_OPEN, forever.
+--
+-- So the expiry is made a property of the write path itself, not of a
+-- scheduler: immediately before a new call is evaluated, any open call at that
+-- table that is already older than the branch's waiter_call_expiry_minutes is
+-- aged out. With no cron at all, the FIRST tap after the window has elapsed
+-- clears the wedge and succeeds; cron, when present, only makes that happen
+-- earlier and keeps the waiter console honest in the meantime.
+--
+-- Why a separate BEFORE INSERT trigger rather than an edit to
+-- public.assert_waiter_call_cooldown() (migration 08):
+--   * that function short-circuits on branches.waiter_call_cooldown_seconds = 0
+--     (a venue that wants no throttle), which is exactly the venue that would
+--     then have no safety valve either;
+--   * the valve must run for EVERY insert path — public_call_waiter, staff
+--     entry, seed data — not only the ones that go through the RPC; and
+--   * BEFORE-row triggers fire in name order, so `trg_waiter_calls_autoexpire`
+--     is guaranteed to run before `trg_waiter_calls_cooldown` and before the
+--     unique index is consulted, which is what makes the wedge clear itself.
+--
+-- The status change is the same one the cron job would have made, written by
+-- the same SECURITY DEFINER owner, so the waiter console and any status guard
+-- see an ordinary system expiry (doc 02 §5.3: it runs as postgres, so
+-- auth.uid() IS NULL and pending/acknowledged -> expired is a system
+-- transition).
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION app_private.expire_waiter_calls_for_table(p_table_id UUID)
+RETURNS INTEGER
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+  WITH u AS (
+    UPDATE public.waiter_calls w
+       SET status     = 'expired',
+           updated_at = now()
+      FROM public.branches b
+     WHERE b.id = w.branch_id
+       AND w.table_id = p_table_id
+       AND w.status IN ('pending', 'acknowledged')
+       AND w.created_at < now() - make_interval(mins => b.waiter_call_expiry_minutes)
+    RETURNING 1)
+  SELECT count(*)::int FROM u;
+$fn$;
+
+REVOKE ALL ON FUNCTION app_private.expire_waiter_calls_for_table(UUID)
+  FROM PUBLIC, anon, authenticated;
+
+COMMENT ON FUNCTION app_private.expire_waiter_calls_for_table(UUID) IS
+  'Doc 02 §5.3, closes F16. The per-table half of app_private.expire_waiter_calls(): '
+  'ages out open calls (pending + acknowledged) at ONE table that are older than '
+  'that branch''s waiter_call_expiry_minutes. Called inline from '
+  'trg_waiter_calls_autoexpire so a forgotten call cannot wedge '
+  'uq_waiter_calls_open_per_table even on a deployment where pg_cron never '
+  'scheduled the housekeeping job. Returns the number of calls expired.';
+
+
+CREATE OR REPLACE FUNCTION public.waiter_calls_expire_stale()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+BEGIN
+  PERFORM app_private.expire_waiter_calls_for_table(NEW.table_id);
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS trg_waiter_calls_autoexpire ON public.waiter_calls;
+
+-- Name chosen so it sorts BEFORE trg_waiter_calls_cooldown: PostgreSQL fires
+-- BEFORE-row triggers in name order, and the cooldown check should see the
+-- post-expiry world.
+CREATE TRIGGER trg_waiter_calls_autoexpire
+  BEFORE INSERT ON public.waiter_calls
+  FOR EACH ROW EXECUTE FUNCTION public.waiter_calls_expire_stale();
+
+COMMENT ON FUNCTION public.waiter_calls_expire_stale() IS
+  'Doc 02 §5.3, closes F16. BEFORE INSERT on public.waiter_calls: expires open '
+  'calls at the same table that have outlived branches.waiter_call_expiry_minutes, '
+  'so uq_waiter_calls_open_per_table can never wedge a table''s CALL WAITER button '
+  'when app_private.expire_waiter_calls() is not scheduled. Correctness of the '
+  'one-open-call-per-table rule therefore does not depend on pg_cron existing.';
 
 
 -- =============================================================================
@@ -351,46 +454,92 @@ COMMENT ON FUNCTION app_private.expire_waiter_calls() IS
 -- pg_cron is a superuser-installed, shared_preload_libraries extension. It is
 -- present on Supabase and absent on a bare Postgres used for schema-only CI, so
 -- both the CREATE EXTENSION and the schedules are attempted and degraded to a
--- NOTICE rather than failing the migration chain. cron.schedule() upserts by job
+-- WARNING plus an audit row rather than failing the migration chain (see F16
+-- below; it used to be a NOTICE). cron.schedule() upserts by job
 -- name, so re-running this file re-points an existing job instead of duplicating
 -- it. Jobs run as the scheduling role (postgres), which is what lets them reach
 -- into app_private.
 --
--- If this block only NOTICEs, both jobs MUST be scheduled by other means before
--- production: without rate_limits_gc the counter table grows unbounded, and
--- without expire_waiter_calls an abandoned call permanently disables a table's
--- CALL WAITER button.
+-- F16: the old form of this block degraded to RAISE NOTICE, which no deploy log
+-- is read closely enough to catch, and both functions then sat unscheduled with
+-- nothing recording the fact. It now (a) RAISEs WARNING, (b) writes a
+-- 'cron.unscheduled' row into app_private.security_events so the omission is
+-- discoverable after the deploy rather than only during it, and (c) leans on
+-- §4b: the waiter-call wedge — the one failure mode that is not merely
+-- housekeeping — is already handled inline by trg_waiter_calls_autoexpire, so
+-- an unscheduled deployment degrades in bounded ways instead of breaking a
+-- table's CALL WAITER button permanently.
+--
+-- Still true and still required: without rate_limits_gc the counter table is
+-- never pruned (it stays small — one row per live table and branch — but its
+-- expired rows accumulate), and without expire_waiter_calls the waiter console
+-- keeps showing calls that the write path will only expire on the next tap. Both
+-- jobs MUST be scheduled by other means when this block warns.
 -- =============================================================================
 
 DO $cron$
+DECLARE
+  v_reason TEXT;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'pg_cron') THEN
     BEGIN
       EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_cron';
     EXCEPTION WHEN OTHERS THEN
-      RAISE NOTICE
-        'pg_cron is unavailable (%): app_private.rate_limits_gc() and '
-        'app_private.expire_waiter_calls() were created but NOT scheduled. '
-        'Schedule them externally before production.', SQLERRM;
-      RETURN;
+      v_reason := 'pg_cron extension unavailable: ' || SQLERRM;
     END;
   END IF;
 
-  BEGIN
-    EXECUTE $sched$
-      SELECT cron.schedule('rate-limits-gc', '*/10 * * * *',
-                           $job$ SELECT app_private.rate_limits_gc(); $job$)
-    $sched$;
+  IF v_reason IS NULL THEN
+    BEGIN
+      EXECUTE $sched$
+        SELECT cron.schedule('rate-limits-gc', '*/10 * * * *',
+                             $job$ SELECT app_private.rate_limits_gc(); $job$)
+      $sched$;
 
-    EXECUTE $sched$
-      SELECT cron.schedule('waiter-calls-expire', '*/5 * * * *',
-                           $job$ SELECT app_private.expire_waiter_calls(); $job$)
-    $sched$;
+      EXECUTE $sched$
+        SELECT cron.schedule('waiter-calls-expire', '*/5 * * * *',
+                             $job$ SELECT app_private.expire_waiter_calls(); $job$)
+      $sched$;
+    EXCEPTION WHEN OTHERS THEN
+      v_reason := 'cron.schedule failed: ' || SQLERRM;
+    END;
+  END IF;
+
+  IF v_reason IS NULL THEN
+    RETURN;                              -- both jobs scheduled; nothing to report
+  END IF;
+
+  RAISE WARNING
+    'doc 02 §5.1/§5.3 NOT scheduled (%): app_private.rate_limits_gc() and '
+    'app_private.expire_waiter_calls() exist but no pg_cron job runs them. '
+    'The waiter-call wedge is still covered inline by trg_waiter_calls_autoexpire '
+    '(§4b), but rate_limits is never pruned and open calls are only aged out on '
+    'the next tap at that table. Schedule both externally before production; '
+    'an app_private.security_events row of kind cron.unscheduled records this.',
+    v_reason;
+
+  -- Make the omission survive the deploy log. Recorded, never fatal: a
+  -- migration must not fail because its own audit trail could not be written.
+  BEGIN
+    INSERT INTO app_private.security_events (id, kind, payload, created_at)
+    VALUES (pg_catalog.gen_random_uuid(), 'cron.unscheduled',
+            jsonb_build_object(
+              'reason',   v_reason,
+              'jobs',     jsonb_build_array(
+                            jsonb_build_object('name', 'rate-limits-gc',
+                                               'schedule', '*/10 * * * *',
+                                               'calls', 'app_private.rate_limits_gc()'),
+                            jsonb_build_object('name', 'waiter-calls-expire',
+                                               'schedule', '*/5 * * * *',
+                                               'calls', 'app_private.expire_waiter_calls()')),
+              'mitigated_by', 'trg_waiter_calls_autoexpire',
+              'finding',  'F16',
+              'source',   '20260901001400_rate_limiting.sql'),
+            now());
   EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE
-      'cron.schedule failed (%): app_private.rate_limits_gc() and '
-      'app_private.expire_waiter_calls() exist but are NOT scheduled. '
-      'Schedule them before production.', SQLERRM;
+    RAISE WARNING
+      'could not record the cron.unscheduled event in app_private.security_events '
+      '(%); the WARNING above is the only trace.', SQLERRM;
   END;
 END
 $cron$;
@@ -559,6 +708,16 @@ $realtime$;
 
 DO $verify$
 DECLARE
+  -- The complete set of routines `anon` is allowed to execute: doc 02 §2.3's
+  -- five capability RPCs, §7.2's channel predicate (doc 02 §9.2 query (b)
+  -- whitelists it by name), and doc 03 §1.4's public_cancel_order, which does
+  -- not exist yet at this point in the chain (20260901001600 creates it) and is
+  -- listed only so re-running this file on a migrated database does not report
+  -- it. 20260901009900 must re-grant exactly this set and nothing else.
+  c_anon_api CONSTANT text[] := ARRAY[
+    'public_resolve_table', 'public_get_menu', 'public_place_order',
+    'public_get_order', 'public_call_waiter', 'order_topic_is_valid',
+    'public_cancel_order'];
   v_bad text;
 BEGIN
   -- (a) Neither counter table may be reachable by anon or authenticated, and
@@ -596,21 +755,96 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 
-  -- (c) Nothing else in public or app_private may be anon-executable. Reported,
-  --     not raised: 20260901009900_privilege_baseline_reassert.sql re-revokes and
-  --     hard-asserts this at the end of the chain, and a mid-chain failure here
-  --     would only obscure which migration introduced the grant.
-  SELECT string_agg(format('%s.%s', n.nspname, p.proname), ', ')
+  -- (c) Nothing outside the six anon doors may be anon-executable.
+  --
+  --     F03 + F14: this check used to report every function PostgreSQL's
+  --     built-in EXECUTE-to-PUBLIC still covers — 21 of them mid-chain — with a
+  --     message that read like a live vulnerability. It is not one, and the
+  --     alarm was inaccurate in a way that trains a reader to ignore it. The
+  --     ALTER DEFAULT PRIVILEGES revokes in 20260901000000 are inert (a
+  --     revoke-only default ACL computes to an empty ACL, which PostgreSQL
+  --     stores as no row at all, so the built-in default reapplies), and the
+  --     single enforcement point for `anon` is the explicit
+  --       REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon, PUBLIC
+  --     in 20260901009900_privilege_baseline_reassert.sql, which runs last and
+  --     hard-asserts the end state.
+  --
+  --     So the check is split by what the re-assert can actually repair:
+  --       c1  reachable only through the built-in PUBLIC grant, or through an
+  --           explicit grant to anon, in a schema 9900 sweeps -> WARNING that
+  --           names the functions and names 9900 as the enforcement point;
+  --       c2  reachable in a way 9900's revoke would NOT undo -> EXCEPTION,
+  --           because a chain that ends here ships an open door.
+  SELECT string_agg(format('%s.%s', n.nspname, p.proname), ', '
+                    ORDER BY n.nspname, p.proname)
     INTO v_bad
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE has_function_privilege('anon', p.oid, 'execute')
-    AND n.nspname IN ('public', 'app_private')
-    AND p.proname NOT IN ('public_resolve_table', 'public_get_menu', 'public_place_order',
-                          'public_get_order', 'public_call_waiter', 'order_topic_is_valid');
+  WHERE n.nspname IN ('public', 'app_private')
+    AND NOT (p.proname = ANY (c_anon_api))
+    AND has_function_privilege('anon', p.oid, 'execute');
 
   IF v_bad IS NOT NULL THEN
-    RAISE WARNING 'doc 02 §6.10: anon may currently execute %', v_bad;
+    RAISE WARNING
+      'doc 02 §6.10: anon can currently execute % outside the public capability '
+      'API. '
+      'Expected at this point in the chain — every function is created '
+      'EXECUTE-to-PUBLIC (F14: the ALTER DEFAULT PRIVILEGES revokes in the '
+      'baseline store no ACL row and so never take effect). The enforcement '
+      'point is 20260901009900_privilege_baseline_reassert.sql, which revokes '
+      'these and fails the migration if any survive. This warning is a '
+      'FYI-until-9900, not a live finding; check (c2) below is the one that '
+      'fails the chain.', v_bad;
+  END IF;
+
+  -- (c2) The teeth. 9900 repairs an over-broad grant by revoking, from anon and
+  --      from PUBLIC, on schemas public and app_private. Two things escape that:
+  --      a privilege anon holds by MEMBERSHIP in some other role (the revoke
+  --      names anon, not the group), and a routine in a project schema 9900 does
+  --      not sweep at all. Either one means the end of the chain is already
+  --      broken, so it fails here, where the offending migration is still
+  --      obvious, rather than 4 files later.
+  SELECT string_agg(format('%s.%s (via role %s)', n.nspname, p.proname,
+                           a.grantee::regrole::text), ', '
+                    ORDER BY n.nspname, p.proname)
+    INTO v_bad
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  CROSS JOIN LATERAL aclexplode(p.proacl) a
+  WHERE n.nspname IN ('public', 'app_private')
+    AND NOT (p.proname = ANY (c_anon_api))
+    AND a.privilege_type = 'EXECUTE'
+    AND a.grantee <> 0                                  -- 0 = PUBLIC; 9900 revokes it
+    AND a.grantee <> 'anon'::regrole::oid              -- 9900 revokes anon by name
+    AND pg_has_role('anon', a.grantee, 'USAGE');        -- ... but not this path
+
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      'doc 02 §2.3/§6.10 violated: anon reaches % through a role membership, '
+      'which 20260901009900''s REVOKE ... FROM anon, PUBLIC does not undo', v_bad
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT string_agg(format('%s.%s', n.nspname, p.proname), ', '
+                    ORDER BY n.nspname, p.proname)
+    INTO v_bad
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname NOT IN ('public', 'app_private')      -- the schemas 9900 sweeps
+    AND n.nspname NOT LIKE 'pg\_%'
+    AND n.nspname NOT IN (                              -- platform-owned, not ours
+      'information_schema', 'auth', 'storage', 'realtime', 'extensions',
+      'graphql', 'graphql_public', 'vault', 'cron', 'net', 'pgsodium',
+      'pgsodium_masks', 'supabase_functions', 'supabase_migrations',
+      'pgbouncer', '_analytics', '_realtime')
+    AND has_function_privilege('anon', p.oid, 'execute');
+
+  IF v_bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      'doc 02 §2.3 violated: anon may execute % in a schema that '
+      '20260901009900_privilege_baseline_reassert.sql does not revoke '
+      '(it sweeps only public and app_private)', v_bad
+      USING ERRCODE = 'insufficient_privilege';
   END IF;
 
   -- (d) Every SECURITY DEFINER function this file created pins search_path
@@ -621,13 +855,52 @@ BEGIN
   JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE p.prosecdef
     AND ((n.nspname = 'app_private'
-          AND p.proname IN ('rate_limit_hit', 'rate_limits_gc', 'expire_waiter_calls'))
-      OR (n.nspname = 'public' AND p.proname = 'order_topic_is_valid'))
+          AND p.proname IN ('rate_limit_hit', 'rate_limits_gc', 'expire_waiter_calls',
+                            'expire_waiter_calls_for_table'))
+      OR (n.nspname = 'public'
+          AND p.proname IN ('order_topic_is_valid', 'waiter_calls_expire_stale')))
     AND coalesce(array_to_string(p.proconfig, ','), '') NOT LIKE '%search_path=%';
 
   IF v_bad IS NOT NULL THEN
     RAISE EXCEPTION 'doc 02 §6.9 violated: unpinned search_path on %', v_bad
       USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- (e) F16: the scheduler-independent safety valve must exist and must fire
+  --     before the cooldown check (BEFORE-row triggers fire in name order).
+  --     Without it, correctness of §5.3 silently depends on pg_cron, which
+  --     section 5 is explicitly allowed to fail to install.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger t
+    WHERE t.tgrelid = 'public.waiter_calls'::regclass
+      AND t.tgname  = 'trg_waiter_calls_autoexpire'
+      AND NOT t.tgisinternal)
+  THEN
+    RAISE EXCEPTION
+      'doc 02 §5.3 violated: trg_waiter_calls_autoexpire is missing, so an '
+      'unresolved waiter call would wedge uq_waiter_calls_open_per_table for '
+      'that table until pg_cron ran app_private.expire_waiter_calls() — which '
+      'this file cannot guarantee ever happens (F16)'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- ... and it must still be the FIRST BEFORE-INSERT row trigger, or a later
+  --     migration has inserted a check that sees the pre-expiry world.
+  --     tgtype bits: ROW = 1, BEFORE = 2, INSERT = 4.
+  SELECT string_agg(t.tgname, ', ' ORDER BY t.tgname)
+    INTO v_bad
+  FROM pg_trigger t
+  WHERE t.tgrelid = 'public.waiter_calls'::regclass
+    AND NOT t.tgisinternal
+    AND (t.tgtype & 7) = 7
+    AND t.tgname < 'trg_waiter_calls_autoexpire';
+
+  IF v_bad IS NOT NULL THEN
+    RAISE WARNING
+      'BEFORE INSERT trigger(s) % now fire before trg_waiter_calls_autoexpire '
+      'on public.waiter_calls; they see open calls the valve has not aged out '
+      'yet. Rename so the valve stays first (BEFORE-row triggers fire in name '
+      'order).', v_bad;
   END IF;
 END
 $verify$;
@@ -635,13 +908,28 @@ $verify$;
 -- =============================================================================
 -- End of migration 14.
 --
--- OPEN CROSS-FILE ITEM for the orchestrator:
+-- WHAT THIS FILE CLOSES
+--   F16  the pg_cron block now warns instead of whispering, records a
+--        'cron.unscheduled' row in app_private.security_events, and — the part
+--        that actually matters — no longer owns the liveness of §5.3: §4b's
+--        trg_waiter_calls_autoexpire ages a wedged table's open call out inline,
+--        so a deployment with no cron at all still cannot disable a table's
+--        CALL WAITER button permanently.
+--   F14  self-check (c) no longer reports the built-in EXECUTE-to-PUBLIC set as
+--        if it were a live breach. It names the functions, names
+--        20260901009900 as the enforcement point, and keeps real teeth in (c2),
+--        which fails the chain for exactly the cases that revoke cannot repair.
+--
+-- STANDING CROSS-FILE REQUIREMENT (F03), asserted by check (b) above:
 -- 20260901009900_privilege_baseline_reassert.sql runs
 --   REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon
--- and then re-grants only the five capability RPCs. That revoke strips the
--- EXECUTE granted above on public.order_topic_is_valid(text), which silently
--- disables the anon customer-tracking channel policy. Doc 02 §9.2 query (b)
--- whitelists order_topic_is_valid by name; the re-assert migration must add
+-- and then re-grants the public capability API. That revoke also strips the
+-- EXECUTE granted above on public.order_topic_is_valid(text) — without which
+-- realtime_customer_order_read raises 42501 for every customer channel instead
+-- of authorizing it. Doc 02 §9.2 query (b) whitelists order_topic_is_valid by
+-- name, so that file must carry
 --   GRANT EXECUTE ON FUNCTION public.order_topic_is_valid(text) TO anon, authenticated;
--- and add 'order_topic_is_valid' to its self-check NOT IN list.
+-- and list 'order_topic_is_valid' in its own self-check whitelist. Verify with:
+--   SELECT has_function_privilege('anon','public.order_topic_is_valid(text)','execute');
+-- against a fully migrated database — it must return true.
 -- =============================================================================

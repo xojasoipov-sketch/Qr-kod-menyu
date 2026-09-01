@@ -36,3 +36,7 @@ yarn-error.log*
 supabase/.branches
 supabase/.temp
 supabase/.env
+
+# scratch probes written by tooling while diagnosing types/builds
+.probe-*
+*.probe.mjs

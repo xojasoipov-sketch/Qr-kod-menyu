@@ -8,6 +8,7 @@
 --        §5.2 public.generate_qr_token(INTEGER)        (re-asserted; created in
 --        §5.3 public.generate_public_code()             migrations 3 and 6 where
 --        §5.4 public.is_valid_order_transition(...)     column DEFAULTs need them)
+--        §5.5 public.safe_app_locale(TEXT, public.app_locale)  (new: F04)
 --   §7   Trigger functions and triggers
 --        §7.1  updated_at on every table
 --        §7.2  auth.users -> public.profiles
@@ -132,6 +133,49 @@ COMMENT ON FUNCTION public.is_valid_order_transition(public.order_status, public
   'The single source of truth for brief §26. Forward path: pending->confirmed->preparing->ready->delivered->completed. CANCELLATION RULE (explicit, as the brief demands): an order may be cancelled from pending, confirmed, preparing or ready - i.e. at any point until the food has physically left the pass. Once delivered, the only legal move is completed; delivered->cancelled is a refund, which is an accounting event this MVP does not model. completed and cancelled are absorbing states with no outgoing edges, so completed->preparing and cancelled->ready are rejected. Same-status "transitions" never reach this function (the guard trigger only fires on an actual change).';
 
 
+-- ---------------------------------------------------------------------------
+-- §5.5 safe_app_locale() — total function from client text to public.app_locale
+--
+-- closes F04 (part 1). auth.users.raw_user_meta_data is CLIENT CONTROLLED: any
+-- browser can send options.data = {locale: 'en-US'} at signup. A bare
+-- ('en-US')::public.app_locale raises 22P02, and because trg_auth_user_created
+-- is an AFTER INSERT trigger on auth.users that 22P02 aborts the whole signup
+-- transaction (GoTrue answers 500 "Database error saving new user"). This
+-- function is TOTAL: every text input, including NULL and garbage, maps to a
+-- real enum label, so no client string can ever raise.
+--
+-- The lookup is against pg_enum rather than a hard-coded IN list so that adding
+-- a locale to public.app_locale needs no second edit here.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.safe_app_locale(
+  p_raw     TEXT,
+  p_default public.app_locale DEFAULT 'uz'
+)
+RETURNS public.app_locale
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SECURITY INVOKER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT COALESCE(
+    (SELECT e.enumlabel::text::public.app_locale
+       FROM pg_catalog.pg_enum e
+       JOIN pg_catalog.pg_type t ON t.oid = e.enumtypid
+       JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public'
+        AND t.typname = 'app_locale'
+        AND e.enumlabel = btrim(COALESCE(p_raw, ''))
+      LIMIT 1),
+    p_default);
+$$;
+
+REVOKE ALL ON FUNCTION public.safe_app_locale(TEXT, public.app_locale) FROM PUBLIC, anon;
+
+COMMENT ON FUNCTION public.safe_app_locale(TEXT, public.app_locale) IS
+  'Total coercion from an untrusted text locale to public.app_locale, falling back to p_default (uz, the profiles.locale default) for NULL, empty, mis-cased or unknown input such as the browser tag ''en-US''. Exists because the only producers of that text are clients (auth.users.raw_user_meta_data, OAuth provider metadata) and a failed cast inside an AFTER INSERT trigger on auth.users denies signup outright. Closes F04.';
+
+
 -- The DROP TRIGGER IF EXISTS lines below make a re-run of this migration safe;
 -- their "does not exist, skipping" notices are pure noise on a first run.
 SET client_min_messages = warning;
@@ -185,6 +229,22 @@ CREATE TRIGGER trg_notification_reads_set_updated_at BEFORE UPDATE ON public.not
 -- §7.2 auth.users -> public.profiles
 -- =============================================================================
 
+-- closes F04. Everything that reaches public.profiles from this trigger is
+-- CLIENT CONTROLLED (auth.users.email is validated only loosely by GoTrue, and
+-- raw_user_meta_data is whatever the signup call put in options.data), while
+-- profiles is strictly typed and CHECK constrained. The trigger is AFTER INSERT
+-- ON auth.users, so ANY error raised here aborts the signup transaction and the
+-- user is never created — a client-triggerable denial of signup. Three were
+-- reproduced against a live database:
+--   1. locale 'en-US'                -> 22P02 invalid input value for app_locale
+--   2. full_name longer than 120     -> 23514 ck_profiles_full_name_len
+--   3. email 'user@localhost'        -> 23514 ck_profiles_email_format
+-- The rule inverted below: SANITISE, never propagate. Each value is coerced or
+-- dropped to something the constraints accept, and the whole INSERT is wrapped
+-- in an exception handler so that no future constraint, no future column and no
+-- unforeseen input can make profile creation block account creation. A profile
+-- that fails to materialise is repairable (the row can be back-filled); an
+-- account that cannot be created is not.
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -192,20 +252,50 @@ VOLATILE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_meta      JSONB := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
+  v_email     TEXT;
+  v_full_name TEXT;
+  v_avatar    TEXT;
+  v_locale    public.app_locale;
 BEGIN
+  -- email: keep it only if it satisfies ck_profiles_email_format AND
+  -- ck_profiles_email_lowercase. profiles.email is a nullable display copy —
+  -- auth.users owns the authoritative address — so dropping an address this
+  -- schema cannot represent costs nothing and never blocks signup.
+  v_email := lower(btrim(COALESCE(NEW.email, '')));
+  IF v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' THEN
+    v_email := NULL;
+  END IF;
+
+  -- full_name: truncate to the 120 characters ck_profiles_full_name_len allows.
+  -- left() before btrim() so a padded 200-character string cannot survive.
+  v_full_name := NULLIF(btrim(left(COALESCE(v_meta ->> 'full_name', ''), 120)), '');
+
+  -- avatar_url: no CHECK today, but an unbounded client string in a column the
+  -- admin UI renders is not worth storing. Rejected rather than truncated: half
+  -- a URL is a broken image, NULL is a default avatar.
+  v_avatar := NULLIF(btrim(COALESCE(v_meta ->> 'avatar_url', '')), '');
+  IF v_avatar IS NOT NULL AND char_length(v_avatar) > 2048 THEN
+    v_avatar := NULL;
+  END IF;
+
+  -- locale: total coercion, never a cast (§5.5).
+  v_locale := public.safe_app_locale(v_meta ->> 'locale');
+
   INSERT INTO public.profiles (id, email, full_name, avatar_url, locale)
-  VALUES (
-    NEW.id,
-    lower(NEW.email),
-    NULLIF(btrim(COALESCE(NEW.raw_user_meta_data ->> 'full_name', '')), ''),
-    NULLIF(btrim(COALESCE(NEW.raw_user_meta_data ->> 'avatar_url', '')), ''),
-    COALESCE(
-      NULLIF(NEW.raw_user_meta_data ->> 'locale', ''),
-      'uz'
-    )::public.app_locale
-  )
+  VALUES (NEW.id, v_email, v_full_name, v_avatar, v_locale)
   ON CONFLICT (id) DO NOTHING;
+
   RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Last line of defence: signup must not fail because of this trigger. The
+    -- WARNING lands in the Postgres log with the auth user id, so a missing
+    -- profile is diagnosable and back-fillable.
+    RAISE WARNING 'handle_new_auth_user: profile creation skipped for auth user % (%: %)',
+      NEW.id, SQLSTATE, SQLERRM;
+    RETURN NEW;
 END;
 $$;
 
@@ -216,7 +306,7 @@ CREATE TRIGGER trg_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
 COMMENT ON FUNCTION public.handle_new_auth_user() IS
-  'Guarantees the 1:1 between auth.users and profiles at the database level, so no signup path (email, OAuth, admin invite, SQL) can produce an authenticated user without a profile row. ON CONFLICT DO NOTHING keeps it idempotent if a profile was pre-created by an invite flow. An invalid locale in user metadata raises 22P02 and aborts signup rather than silently defaulting - metadata is set by our own code, so a bad value is a bug worth failing on.';
+  'Guarantees the 1:1 between auth.users and profiles at the database level, so no signup path (email, OAuth, admin invite, SQL) can produce an authenticated user without a profile row. ON CONFLICT DO NOTHING keeps it idempotent if a profile was pre-created by an invite flow. Every value copied out of auth.users is CLIENT CONTROLLED and is therefore sanitised, not trusted: the locale goes through public.safe_app_locale() (an unknown tag such as ''en-US'' becomes ''uz'' instead of raising 22P02), full_name is truncated to the 120 characters ck_profiles_full_name_len allows, an address that cannot satisfy ck_profiles_email_format is stored as NULL, and an over-long avatar_url is dropped. The whole INSERT sits inside an EXCEPTION WHEN OTHERS handler because this is an AFTER INSERT trigger on auth.users: any error it raises would abort signup itself and GoTrue would answer 500. Closes F04.';
 
 
 -- =============================================================================
@@ -529,12 +619,43 @@ COMMENT ON FUNCTION public.assert_order_item_options_consistent() IS
 -- reason raises ORD04. Invoker-rights: it touches only NEW/OLD and one
 -- IMMUTABLE function.
 
+-- closes F10 (second half). Besides the transition check and the lifecycle
+-- timestamps, this guard is the only BEFORE UPDATE trigger positioned to know
+-- WHO moved the order, so it also stamps the three staff attribution columns.
+-- Nothing else in the chain ever wrote orders.confirmed_by_staff_id /
+-- served_by_staff_id / cancelled_by_staff_id, so those columns — and the three
+-- partial indexes built on them in 20260901000900_indexes.sql — were
+-- permanently empty and every "which waiter served this?" question was
+-- unanswerable.
+--
+-- NOTE TO ANY LATER MIGRATION THAT SUPERSEDES THIS BODY (20260901001500_
+-- guard_triggers.sql does, via CREATE OR REPLACE on the same OID, to make the
+-- state machine role-aware): the replacement MUST preserve, in this order,
+--   (1) the is_valid_order_transition() check raising ORD01,
+--   (2) every lifecycle timestamp assignment below, including due_at,
+--   (3) the mandatory cancellation_reason raising ORD04,
+--   (4) the COALESCE(NEW.<col>, v_staff_id) stamping of the three
+--       *_by_staff_id columns, and the rule that a transition declared
+--       app.actor_kind = 'customer' stamps none of them (a guest cancelling
+--       their own order is not staff work),
+-- or F10 silently reopens.
+--
+-- Security mode is DEFINER rather than INVOKER because the body now reads
+-- public.staff, which an anon caller inside public_place_order / public_cancel_
+-- order holds no SELECT on; that follows the §7 global note at the top of this
+-- file (a trigger that reads rows other than NEW/OLD is DEFINER with a pinned
+-- search_path).
 CREATE OR REPLACE FUNCTION public.orders_status_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 VOLATILE
+SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_actor_kind TEXT;
+  v_profile    UUID;
+  v_staff_id   UUID;
 BEGIN
   IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
     RETURN NEW;
@@ -546,17 +667,49 @@ BEGIN
       USING ERRCODE = 'ORD01';
   END IF;
 
+  -- Who is moving it. The documented actor contract (§7.7b) wins when the
+  -- caller adopted it; otherwise the JWT subject is the actor, which is the
+  -- state of every ordinary staff UPDATE through PostgREST. A transition
+  -- explicitly declared as customer work stamps no staff column at all.
+  v_actor_kind := NULLIF(btrim(current_setting('app.actor_kind', true)), '');
+
+  IF v_actor_kind IS DISTINCT FROM 'customer' THEN
+    v_profile := COALESCE(
+                   NULLIF(btrim(current_setting('app.actor_profile_id', true)), '')::uuid,
+                   (SELECT auth.uid()));
+
+    IF v_profile IS NOT NULL THEN
+      -- The FK is composite (restaurant_id, staff_id), so the membership must
+      -- belong to THIS order's restaurant; a restaurant-wide row (branch_id
+      -- NULL) counts for every branch of it. Strongest role wins when someone
+      -- holds several memberships in one tenant.
+      SELECT s.id INTO v_staff_id
+      FROM public.staff s
+      WHERE s.profile_id    = v_profile
+        AND s.restaurant_id = NEW.restaurant_id
+        AND (s.branch_id IS NULL OR s.branch_id = NEW.branch_id)
+        AND s.is_active
+      ORDER BY array_position(
+        ARRAY['RESTAURANT_OWNER','MANAGER','WAITER','KITCHEN']::public.app_role[], s.role)
+      LIMIT 1;
+    END IF;
+  END IF;
+
   CASE NEW.status
     WHEN 'confirmed' THEN
       NEW.confirmed_at := COALESCE(NEW.confirmed_at, now());
       NEW.due_at       := COALESCE(NEW.due_at,
                             now() + make_interval(mins => NEW.estimated_prep_minutes));
+      NEW.confirmed_by_staff_id := COALESCE(NEW.confirmed_by_staff_id, v_staff_id);
     WHEN 'preparing' THEN NEW.preparing_at := COALESCE(NEW.preparing_at, now());
     WHEN 'ready'     THEN NEW.ready_at     := COALESCE(NEW.ready_at,     now());
-    WHEN 'delivered' THEN NEW.delivered_at := COALESCE(NEW.delivered_at, now());
+    WHEN 'delivered' THEN
+      NEW.delivered_at := COALESCE(NEW.delivered_at, now());
+      NEW.served_by_staff_id := COALESCE(NEW.served_by_staff_id, v_staff_id);
     WHEN 'completed' THEN NEW.completed_at := COALESCE(NEW.completed_at, now());
     WHEN 'cancelled' THEN
       NEW.cancelled_at := COALESCE(NEW.cancelled_at, now());
+      NEW.cancelled_by_staff_id := COALESCE(NEW.cancelled_by_staff_id, v_staff_id);
       IF NEW.cancellation_reason IS NULL OR btrim(NEW.cancellation_reason) = '' THEN
         RAISE EXCEPTION 'cancelling order % requires a cancellation_reason', OLD.id
           USING ERRCODE = 'ORD04';
@@ -576,7 +729,7 @@ CREATE TRIGGER trg_orders_status_guard
   FOR EACH ROW EXECUTE FUNCTION public.orders_status_guard();
 
 COMMENT ON FUNCTION public.orders_status_guard() IS
-  'The database''s enforcement of brief §26 and §34.8. Rejects any transition is_valid_order_transition() disallows - completed -> preparing and cancelled -> ready both raise ORD01 - and stamps the lifecycle timestamp for the state being entered so no code path can advance an order without recording when. due_at is computed here rather than as a GENERATED column because timestamptz + interval is STABLE, not IMMUTABLE, and is therefore rejected in a generated-column expression. This is a backstop, not the primary implementation: the API state machine must reject the transition first and return a friendly 409.';
+  'The database''s enforcement of brief §26 and §34.8. Rejects any transition is_valid_order_transition() disallows - completed -> preparing and cancelled -> ready both raise ORD01 - and stamps the lifecycle timestamp for the state being entered so no code path can advance an order without recording when. due_at is computed here rather than as a GENERATED column because timestamptz + interval is STABLE, not IMMUTABLE, and is therefore rejected in a generated-column expression. It also stamps confirmed_by_staff_id / served_by_staff_id / cancelled_by_staff_id from the acting staff row (app.actor_profile_id, else auth.uid(), resolved inside this order''s restaurant), which nothing in the chain did before, leaving those three columns and their three indexes permanently empty - closes F10. A transition declared app.actor_kind = ''customer'' stamps none of them. This is a backstop, not the primary implementation: the API state machine must reject the transition first and return a friendly 409.';
 
 -- --- (b) Automatic history logging -----------------------------------------
 --
@@ -589,6 +742,20 @@ COMMENT ON FUNCTION public.orders_status_guard() IS
 -- The third argument true makes them transaction-local, so they cannot leak
 -- across pooled connections. Unset settings degrade to ('system', NULL, NULL).
 
+-- closes F10 (first half). The actor used to come from the transaction GUCs and
+-- from nothing else, which produced two reproduced defects:
+--   (a) with no GUC set — the state of EVERY ordinary staff UPDATE through
+--       PostgREST — every row was written changed_by_kind='system',
+--       changed_by=NULL, changed_by_role=NULL, so the audit trail brief §25 asks
+--       for attributed no staff action to anyone;
+--   (b) setting app.actor_profile_id WITHOUT app.actor_role — the natural first
+--       step of adopting the contract — made kind='staff' with role NULL, which
+--       ck_order_status_history_staff_actor rejects with 23514, i.e. adopting
+--       half the contract broke all staff order handling.
+-- The function is now self-sufficient: it falls back to the JWT subject, it
+-- derives the role itself from the branch role helpers, and it classifies a
+-- change as 'staff' ONLY when a role was actually resolved, so no combination
+-- of settings can produce a row the CHECK constraints reject.
 CREATE OR REPLACE FUNCTION public.orders_log_status_change()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -597,28 +764,75 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_actor UUID;
-  v_kind  public.actor_kind;
-  v_role  public.app_role;
-  v_note  TEXT;
-  v_prev  public.order_status;
+  v_uid       UUID;
+  v_actor     UUID;
+  v_kind      public.actor_kind;
+  v_kind_raw  TEXT;
+  v_role      public.app_role;
+  v_note      TEXT;
+  v_prev      public.order_status;
 BEGIN
-  v_actor := NULLIF(current_setting('app.actor_profile_id', true), '')::uuid;
-  v_kind  := COALESCE(
-               NULLIF(current_setting('app.actor_kind', true), ''),
-               CASE WHEN v_actor IS NOT NULL THEN 'staff' ELSE 'system' END
-             )::public.actor_kind;
-  v_role  := NULLIF(current_setting('app.actor_role', true), '')::public.app_role;
-  v_note  := NULLIF(btrim(current_setting('app.actor_note', true)), '');
-  v_prev  := CASE WHEN TG_OP = 'UPDATE' THEN OLD.status ELSE NULL END;
-
   IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
     RETURN NULL;
   END IF;
 
-  IF v_kind = 'customer' THEN
+  v_uid      := (SELECT auth.uid());
+  v_actor    := NULLIF(btrim(current_setting('app.actor_profile_id', true)), '')::uuid;
+  v_kind_raw := NULLIF(btrim(current_setting('app.actor_kind',       true)), '');
+  v_role     := NULLIF(btrim(current_setting('app.actor_role',       true)), '')::public.app_role;
+  v_note     := NULLIF(btrim(current_setting('app.actor_note',       true)), '');
+  v_prev     := CASE WHEN TG_OP = 'UPDATE' THEN OLD.status ELSE NULL END;
+
+  IF v_kind_raw = 'customer' THEN
+    -- An anonymous guest. ck_order_status_history_customer_actor requires both
+    -- identity columns to be NULL, and there is no profile to name anyway.
+    v_kind  := 'customer';
     v_actor := NULL;
     v_role  := NULL;
+
+  ELSIF v_kind_raw = 'system' THEN
+    -- Explicitly declared machine work (cron, backfill). Honoured as declared:
+    -- no role is claimed on its behalf.
+    v_kind := 'system';
+    v_role := NULL;
+
+  ELSE
+    -- Everything else, INCLUDING the plain PostgREST staff UPDATE that sets no
+    -- GUC at all. The JWT subject is the actor when the contract was not used.
+    v_actor := COALESCE(v_actor, v_uid);
+
+    IF v_role IS NULL AND v_actor IS NOT NULL THEN
+      IF v_actor = v_uid THEN
+        -- The caller is the actor: the branch role helpers already answer this
+        -- exactly as the RLS policies do (and return SUPER_ADMIN for a platform
+        -- admin). They are created in 20260901001100_authz_helpers.sql, which
+        -- runs before any traffic reaches this trigger.
+        v_role := COALESCE(public.auth_role_in_branch(NEW.branch_id), public.auth_role());
+      ELSE
+        -- A service-role writer naming a different actor: resolve that
+        -- profile's strongest active membership in this order's restaurant.
+        SELECT s.role INTO v_role
+        FROM public.staff s
+        JOIN public.profiles p ON p.id = s.profile_id
+        WHERE s.profile_id    = v_actor
+          AND s.restaurant_id = NEW.restaurant_id
+          AND (s.branch_id IS NULL OR s.branch_id = NEW.branch_id)
+          AND s.is_active
+          AND p.is_active
+        ORDER BY array_position(
+          ARRAY['RESTAURANT_OWNER','MANAGER','WAITER','KITCHEN']::public.app_role[], s.role)
+        LIMIT 1;
+      END IF;
+    END IF;
+
+    -- 'staff' is claimed only when a role backs it up. Anything else is
+    -- 'system': that keeps changed_by (who we believe acted) while never
+    -- violating ck_order_status_history_staff_actor, which is what the
+    -- half-adopted contract used to do.
+    v_kind := CASE
+                WHEN v_actor IS NOT NULL AND v_role IS NOT NULL THEN 'staff'
+                ELSE 'system'
+              END::public.actor_kind;
   END IF;
 
   INSERT INTO public.order_status_history (
@@ -644,7 +858,7 @@ CREATE TRIGGER trg_orders_log_status_change
   FOR EACH ROW EXECUTE FUNCTION public.orders_log_status_change();
 
 COMMENT ON FUNCTION public.orders_log_status_change() IS
-  'Writes order_status_history automatically, on creation (previous_status NULL, new_status pending) and on every subsequent status change. Because this is the ONLY writer of that table, no code path can change an order status without leaving an audit row - the guarantee brief §25 asks for. The actor is read from transaction-local settings, NOT from a function argument, so the audit works identically for PostgREST calls, service-role route handlers and psql. SECURITY DEFINER because an anonymous guest cancelling their own order has no INSERT right on the audit table.';
+  'Writes order_status_history automatically, on creation (previous_status NULL, new_status pending) and on every subsequent status change. Because this is the ONLY writer of that table, no code path can change an order status without leaving an audit row - the guarantee brief §25 asks for. The actor is resolved in three steps rather than read from one setting: app.actor_profile_id if the caller adopted the §7.7b contract, else auth.uid(); the role from app.actor_role if given, else from auth_role_in_branch()/auth_role() for the caller or from the named profile''s staff row; and changed_by_kind is ''staff'' only when a role was actually resolved, ''system'' otherwise. That makes an ordinary PostgREST staff UPDATE - which sets no GUC at all - attributable instead of anonymous, and makes the half-adopted contract (profile id without role) impossible to turn into a 23514 on ck_order_status_history_staff_actor. Closes F10. SECURITY DEFINER because an anonymous guest cancelling their own order has no INSERT right on the audit table, and because the role lookup reads public.staff.';
 
 -- --- (c) Append-only enforcement -------------------------------------------
 --

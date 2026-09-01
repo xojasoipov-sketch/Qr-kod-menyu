@@ -125,25 +125,184 @@ GRANT SELECT ON
 TO authenticated;
 
 -- Step 3: full direct-write verbs, only where a legitimate direct-write path
--- exists. Each is fenced by the policies in section 2 of this file.
+-- exists AND every column of the table is legitimately client-writable. Each is
+-- fenced by the policies in section 2 of this file.
 GRANT INSERT, UPDATE, DELETE ON
   public.restaurants,            -- INSERT/DELETE reachable by platform admin only, per policy
   public.branches,
-  public.staff,
-  public.tables,
   public.menu_categories,
-  public.menu_items,
   public.menu_item_options,
   public.promotions
 TO authenticated;
 
--- Step 4: narrow verbs where only one kind of change is legal. The column-level
--- restriction is not expressible as a policy and lives in the guard triggers
--- (§3.18), which run for every role including the table owner.
-GRANT INSERT, UPDATE ON public.profiles           TO authenticated;  -- own row; guarded by trigger
-GRANT UPDATE          ON public.orders            TO authenticated;  -- status only; guarded by trigger
-GRANT UPDATE          ON public.waiter_calls      TO authenticated;  -- acknowledge / resolve
-GRANT UPDATE          ON public.notifications     TO authenticated;  -- guarded by trigger
+-- Step 3b: COLUMN-SCOPED write verbs.
+--
+-- These are the tables where "which rows" (policy) and "which verbs" (grant)
+-- were never enough, because the illegal move is a WHICH COLUMN move: an UPDATE
+-- that passes its policy on a row the caller may genuinely edit, but touches a
+-- column no client may ever write. §3.18's guard triggers reject those changes
+-- in the row; the grants below make the engine refuse the statement before any
+-- trigger body runs. Two independent layers on purpose: a trigger can be
+-- dropped, disabled with ALTER TABLE ... DISABLE TRIGGER, or short-circuited by
+-- a future SECURITY DEFINER writer that sets app.guard_bypass; a column
+-- privilege has none of those escape hatches. Every list below omits money,
+-- identity, tenant keys, bearer tokens, GENERATED columns and audit/attribution
+-- columns, so the audited exploits come back as 42501 "permission denied for
+-- column" rather than as a business-rule error.
+--
+-- What PostgreSQL can and cannot express here (the reason some rules stay in
+-- the triggers and are not duplicated as grants):
+--   * UPDATE and INSERT accept column lists; SELECT does too but the staff
+--     surface reads whole rows. DELETE has NO column-level form at all.
+--   * A column list is a property of one ACL on one table. It CANNOT vary by
+--     app_role, so any rule of the form "KITCHEN may write only X" is not
+--     expressible as a grant.
+--   * A grant restricts WHICH columns, never WHICH VALUES. "A MANAGER may not
+--     mint a RESTAURANT_OWNER" is a value rule and stays in trg_staff_guard().
+-- Where a rule is inexpressible the grant carries the widest legitimate set and
+-- the guard trigger narrows it. The layers are complementary, not redundant.
+
+-- ------------------------------------------------------------------ profiles
+-- closes F05 (privilege escalation to platform admin).
+-- is_platform_admin is the switch public.is_super_admin() reads, and
+-- profiles_update_self admits the caller's own row by design, so a table-wide
+-- grant let any signed-in staff member — a KITCHEN account was enough — PATCH
+-- themselves to platform admin and own every tenant. It appears in neither list
+-- below, so the column is not addressable by `authenticated` at all and the
+-- PATCH fails with 42501 even if trg_profiles_guard() is ever dropped. `id` is
+-- absent for the same reason: it is the auth.users identity and the join key of
+-- every policy in this file.
+-- `email` is settable only on the self-repair INSERT: auth.users owns the
+-- address and trg_auth_user_created copies it down, so a client rewriting it
+-- afterwards would only desynchronise the display copy from the identity.
+-- `is_active` stays writable because a manager deactivating a colleague is a
+-- real operation (profiles_update_manager); trg_profiles_guard() is what stops
+-- you deactivating yourself. created_at / updated_at are audit columns.
+REVOKE INSERT, UPDATE ON public.profiles FROM authenticated;
+GRANT INSERT (id, email, full_name, phone, avatar_url, avatar_path, locale)
+  ON public.profiles TO authenticated;   -- own row only, per profiles_insert_self
+GRANT UPDATE (full_name, phone, avatar_url, avatar_path, locale,
+              is_active, last_seen_at)
+  ON public.profiles TO authenticated;
+
+-- --------------------------------------------------------------------- staff
+-- closes F06 (MANAGER -> RESTAURANT_OWNER escalation, last-owner removal) as
+-- far as the privilege layer reaches — which is deliberately only half of it.
+--
+-- INSERT and DELETE stay table-wide, and the reason is worth stating rather
+-- than hiding: the F06 exploits are VALUE restrictions, not column
+-- restrictions. A manager must be able to write `role` to add a WAITER, so
+-- `role` cannot be left out of an INSERT column list; what must be rejected is
+-- the single value 'RESTAURANT_OWNER', and no GRANT can say that. DELETE has no
+-- column-level form in PostgreSQL at all, so "you may not delete the last
+-- active owner" is equally inexpressible. Both rules, plus "nobody edits their
+-- own membership", live in trg_staff_guard() (§3.18) and only there.
+-- The UPDATE grant below still removes the identity/tenant half of the attack
+-- surface without any trigger: profile_id and restaurant_id are absent, so a
+-- staff row can never be repointed at another person or moved to another
+-- tenant, and id / created_at / updated_at are absent as identity and audit.
+REVOKE UPDATE ON public.staff FROM authenticated;
+GRANT INSERT, DELETE ON public.staff TO authenticated;
+GRANT UPDATE (role, branch_id, permissions, display_name, employee_code,
+              is_active, invited_at, joined_at)
+  ON public.staff TO authenticated;
+
+-- -------------------------------------------------------------------- tables
+-- closes F13 (client-chosen QR token, client-resettable rate-limit clocks).
+-- qr_token is a bearer capability carrying 128 bits of entropy (§1.13): whoever
+-- holds it can order and call waiters as that table, so it may only be minted by
+-- generate_qr_token() inside admin_rotate_table_token(). last_order_at and
+-- last_waiter_call_at are the §5.2/§5.3 cooldown clocks that public_place_order
+-- and public_call_waiter read FOR UPDATE; a client that can NULL them has no
+-- rate limit. Those five, plus qr_token_issued_at and qr_rotation_count (the
+-- rotation audit trail), appear in neither list.
+-- The INSERT list matters as much as the UPDATE list: trg_tables_guard() is
+-- BEFORE UPDATE only, so with a table-wide INSERT a manager could reach exactly
+-- the same capability by the other verb — create a table WITH a chosen
+-- qr_token. restaurant_id and branch_id are in the INSERT list because they are
+-- NOT NULL with no default (the row cannot exist without them) and
+-- tables_insert_manager's WITH CHECK is what validates them; they are absent
+-- from the UPDATE list, so the row can never be moved afterwards.
+REVOKE INSERT, UPDATE ON public.tables FROM authenticated;
+GRANT INSERT (restaurant_id, branch_id, number, name, zone, seats,
+              sort_order, is_active)
+  ON public.tables TO authenticated;
+GRANT UPDATE (number, name, zone, seats, sort_order, is_active, deleted_at)
+  ON public.tables TO authenticated;
+GRANT DELETE ON public.tables TO authenticated;
+
+-- ---------------------------------------------------------------- menu_items
+-- closes F09 (kitchen staff rewriting menu prices).
+-- The full management set stays: menu_items_insert_manager,
+-- menu_items_delete_manager and the can_manage_menu arm of
+-- menu_items_update_menu_or_kitchen are legitimately allowed to move every
+-- column below, `price` included — a menu manager setting prices IS the
+-- feature. NOTE, and this is the load-bearing caveat of this whole section: the
+-- same policy also admits KITCHEN of the branch, and a column-level grant is
+-- one ACL on one table that CANNOT vary by role. Narrowing KITCHEN to
+-- is_available / unavailable_until ("86 this dish") is therefore NOT expressible
+-- here and is enforced by trg_menu_items_guard() (§3.18). What the grant closes
+-- for every role, trigger or no trigger: id / restaurant_id / branch_id
+-- (identity and tenancy), popularity_score (a system-maintained sales counter),
+-- search_vector (GENERATED — writable by nobody) and created_at / updated_at.
+REVOKE UPDATE ON public.menu_items FROM authenticated;
+GRANT INSERT, DELETE ON public.menu_items TO authenticated;
+GRANT UPDATE (category_id, name, description, ingredients,
+              price, compare_at_price,
+              image_url, image_path, spicy_level, preparation_time, calories,
+              dietary_tags, is_available, unavailable_until,
+              available_from, available_until,
+              is_featured, is_popular, sort_order, deleted_at)
+  ON public.menu_items TO authenticated;
+
+-- -------------------------------------------------------------------- orders
+-- closes F07 (bill zeroing and order-identity rewriting by any branch staff).
+-- Money is the point of this one: subtotal, discount_total, service_fee,
+-- service_fee_bps, total, currency and currency_decimals are computed inside
+-- public_place_order() / staff_place_order() from server-side prices (§1.3,
+-- §6.2) and are absent here, so `{"discount_total": <subtotal>, "total": 0}` is
+-- a 42501 rather than a free meal — the CHECK constraints it was engineered to
+-- satisfy are never even reached. Absent for the same reason: the identity and
+-- idempotency columns (id, restaurant_id, branch_id, table_id, order_number,
+-- order_seq, business_date, public_code, client_request_id, payload_fingerprint,
+-- customer_session_id — rewriting the last two silently defeats the §5.2
+-- idempotency guard) and every lifecycle timestamp (created_at, placed_at,
+-- confirmed_at … cancelled_at, updated_at), which orders_status_guard() stamps
+-- and which decide the kitchen's 24h visibility window.
+-- confirmed_by_staff_id / served_by_staff_id / cancelled_by_staff_id are absent
+-- too: since F10 they are stamped from the acting staff row inside
+-- orders_status_guard(), so a client able to write them could only forge
+-- attribution in the audit trail.
+-- What remains is the status machine plus the service columns a waiter really
+-- does edit at the table. WHICH transitions each role may drive is a value rule,
+-- not a column rule, and belongs to order_transition_allowed() (§3.17).
+REVOKE UPDATE ON public.orders FROM authenticated;
+GRANT UPDATE (status, cancellation_reason,
+              customer_name, customer_phone, customer_note, guest_count,
+              estimated_prep_minutes, due_at)
+  ON public.orders TO authenticated;
+
+-- ------------------------------------------------------------- notifications
+-- closes F11 — by removing the verb entirely rather than narrowing it.
+-- 02 §3.1 annotates its grant "read_at only", but the binding schema puts no
+-- read_at on notifications: the per-staff read mark is a row in
+-- public.notification_reads (§9 below), which has its own INSERT grant and a
+-- self-scoped policy. There is therefore NO legitimate client-writable column
+-- left to name in a column list — payload, type, priority, order_id,
+-- waiter_call_id, expires_at and the target_* addressing are all
+-- producer-owned — while notifications_update_addressee is satisfied by
+-- target_staff_id IS NULL, i.e. by every broadcast row in the caller's branch.
+-- An empty column list is not expressible in SQL, and the honest expression of
+-- "no column is writable" is no UPDATE privilege at all.
+-- The policy itself is deliberately left standing: it is not this section's to
+-- remove, it grants nothing at all without the verb (PostgREST returns 42501),
+-- and it records who the addressee would be if a genuinely client-writable
+-- column is ever added — at which point grant that one column by name here.
+REVOKE UPDATE ON public.notifications FROM authenticated;
+
+-- Step 4: narrow verbs where only one kind of change is legal and the column
+-- surface is already safe.
+GRANT UPDATE          ON public.waiter_calls      TO authenticated;  -- acknowledge / resolve; column rules in trg_waiter_calls_guard()
 GRANT INSERT          ON public.notification_reads TO authenticated; -- marking one notification read
 
 -- Step 5: everything not granted above stays denied. In particular NO role ever
@@ -151,8 +310,10 @@ GRANT INSERT          ON public.notification_reads TO authenticated; -- marking 
 --   INSERT / UPDATE / DELETE on order_items, order_item_options, order_status_history
 --   INSERT / UPDATE / DELETE on qr_token_history
 --   INSERT / DELETE          on orders, waiter_calls, notifications
+--   UPDATE                   on notifications (no client-writable column exists)
 --   DELETE                   on profiles, notification_reads
 --   any verb at all          on branch_order_counters, promotion_items (write side)
+--   any column not named in the column lists of step 3b, on any table there
 -- Those rows exist only because a SECURITY DEFINER function created them.
 
 -- Step 6: one EXECUTE grant the policies above cannot work without.
@@ -709,7 +870,11 @@ CREATE POLICY notifications_select_addressee ON public.notifications
   );
 
 -- Marking as read only. trg_notifications_guard() rejects any change other than
--- the read state.
+-- the read state — and since F11 there is no such change: `authenticated` holds
+-- NO update privilege on this table at all (section 1, step 3b), because the
+-- read mark lives in public.notification_reads. This policy is kept as the
+-- documented addressee predicate for a future column-scoped grant; with no
+-- UPDATE verb behind it, it currently admits nothing.
 CREATE POLICY notifications_update_addressee ON public.notifications
   FOR UPDATE TO authenticated
   USING      ( public.has_branch_access(branch_id)

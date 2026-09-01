@@ -427,9 +427,17 @@ BEGIN
     -- Whole-row diff: any column other than the allow-listed ones is a rejection,
     -- so a column added by a future migration is closed by default rather than
     -- silently opened.
-    IF to_jsonb(NEW) - 'is_available' - 'updated_at'
+    --
+    -- search_vector must be excluded, and excluding it is safe. It is a STORED
+    -- GENERATED column, and PostgreSQL computes generated columns AFTER all
+    -- BEFORE ROW triggers have run, so NEW.search_vector is always NULL here
+    -- while OLD.search_vector holds the stored tsvector — every single UPDATE
+    -- would otherwise look like a forbidden column change. It is not a hole:
+    -- the column is derived from name/description/ingredients, all of which
+    -- this same diff protects, and a client cannot write it at all.
+    IF to_jsonb(NEW) - 'is_available' - 'updated_at' - 'search_vector'
        IS DISTINCT FROM
-       to_jsonb(OLD) - 'is_available' - 'updated_at' THEN
+       to_jsonb(OLD) - 'is_available' - 'updated_at' - 'search_vector' THEN
       PERFORM app_private.raise_app_error('QR054_COLUMN_NOT_ALLOWED', 403,
         jsonb_build_object('table', 'menu_items',
           'allowed', jsonb_build_array('is_available')));

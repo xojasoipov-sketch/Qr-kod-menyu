@@ -16,9 +16,173 @@
 
 -- -----------------------------------------------------------------------------
 -- §2 Extensions
+--
+-- closes F15 (and carries the schema-USAGE half of F02's note).
+--
+-- This file used to open with a bare
+--     CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+-- which assumes the `extensions` schema already exists. It does on a Supabase
+-- project, where the platform creates it before any project migration runs; it
+-- does not on a stock PostgreSQL instance, where the whole chain aborted on its
+-- very first statement with `ERROR: schema "extensions" does not exist`.
+--
+-- Three post-conditions must hold afterwards, identically on both platforms:
+--
+--   1. schema `extensions` exists and the request roles may traverse it. This
+--      is not cosmetic: public.generate_qr_token() and
+--      public.generate_public_code() are SECURITY INVOKER and sit in the
+--      DEFAULT expression of tables.qr_token and orders.public_code, so a
+--      manager creating a table executes them as `authenticated` and needs
+--      USAGE on the schema they resolve through (F02).
+--
+--   2. pgcrypto is installed somewhere.
+--
+--   3. `extensions.gen_random_bytes(integer)` and `extensions.digest(text,text)`
+--      resolve, because migrations 03 (line 39), 06 (line 52), 08 (lines 82/98)
+--      and 13 (line 726) call them schema-qualified. If pgcrypto was already
+--      installed into a different schema — a hand-rolled instance normally puts
+--      it in `public` — moving or reinstalling someone else's extension is not
+--      this migration's business, so we publish forwarding wrappers in
+--      `extensions` instead. They are SECURITY DEFINER on purpose:
+--      20260901009900 revokes every routine in `public` from anon and PUBLIC,
+--      which would otherwise take pgcrypto away from the very roles that
+--      evaluate those two column defaults.
+--
+-- The block is idempotent and re-runnable: nothing here is created twice, and
+-- on Supabase (pgcrypto already in `extensions`) it does nothing at all beyond
+-- the CREATE EXTENSION the old line did.
 -- -----------------------------------------------------------------------------
--- Supabase installs extensions into the `extensions` schema.
-CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+
+DO $ext$
+DECLARE
+  v_schema TEXT;
+BEGIN
+  -- 1. The home schema. CREATE SCHEMA IF NOT EXISTS is not used: on a platform
+  --    where the schema exists but is owned by another role, the IF NOT EXISTS
+  --    form still requires CREATE on the database, and we would rather not ask
+  --    for a privilege we do not need.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'extensions') THEN
+    EXECUTE 'CREATE SCHEMA extensions';
+    RAISE NOTICE
+      'created schema "extensions" (Supabase ships it; stock PostgreSQL does not)';
+  END IF;
+
+  -- 2. Where does pgcrypto actually live?
+  SELECT n.nspname
+    INTO v_schema
+  FROM pg_catalog.pg_extension e
+  JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname = 'pgcrypto';
+
+  IF v_schema IS NULL THEN
+    BEGIN
+      EXECUTE 'CREATE EXTENSION pgcrypto WITH SCHEMA extensions';
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION
+        'pgcrypto is required for QR-token and order public-code entropy '
+        '(doc 01 §2, §1.13) and could not be installed: %', SQLERRM;
+    END;
+    v_schema := 'extensions';
+  END IF;
+
+  -- 3. pgcrypto lives elsewhere: forward the two entry points the later
+  --    migrations hard-code, so their schema-qualified calls still resolve.
+  IF v_schema <> 'extensions' THEN
+    RAISE WARNING
+      'pgcrypto is installed in schema "%", not "extensions"; publishing '
+      'SECURITY DEFINER forwarding wrappers extensions.gen_random_bytes(integer), '
+      'extensions.digest(text,text) and extensions.digest(bytea,text) so the '
+      'schema-qualified calls in migrations 03/06/08/13 resolve.', v_schema;
+
+    EXECUTE format(
+      'CREATE OR REPLACE FUNCTION extensions.gen_random_bytes(INTEGER) '
+      'RETURNS BYTEA LANGUAGE sql VOLATILE STRICT SECURITY DEFINER '
+      'SET search_path = '''' AS ''SELECT %I.gen_random_bytes($1)''', v_schema);
+
+    EXECUTE format(
+      'CREATE OR REPLACE FUNCTION extensions.digest(TEXT, TEXT) '
+      'RETURNS BYTEA LANGUAGE sql IMMUTABLE STRICT SECURITY DEFINER '
+      'SET search_path = '''' AS ''SELECT %I.digest($1, $2)''', v_schema);
+
+    EXECUTE format(
+      'CREATE OR REPLACE FUNCTION extensions.digest(BYTEA, TEXT) '
+      'RETURNS BYTEA LANGUAGE sql IMMUTABLE STRICT SECURITY DEFINER '
+      'SET search_path = '''' AS ''SELECT %I.digest($1, $2)''', v_schema);
+
+    EXECUTE 'COMMENT ON FUNCTION extensions.gen_random_bytes(INTEGER) IS '
+            '''Forwarding wrapper published by 20260901000100 when pgcrypto is '
+            'installed outside the extensions schema. SECURITY DEFINER so it '
+            'survives 20260901009900''''s revoke of every routine in public. '
+            'Closes F15.''';
+    EXECUTE 'COMMENT ON FUNCTION extensions.digest(TEXT, TEXT) IS '
+            '''Forwarding wrapper published by 20260901000100 when pgcrypto is '
+            'installed outside the extensions schema. Closes F15.''';
+    EXECUTE 'COMMENT ON FUNCTION extensions.digest(BYTEA, TEXT) IS '
+            '''Forwarding wrapper published by 20260901000100 when pgcrypto is '
+            'installed outside the extensions schema. Closes F15.''';
+  END IF;
+END
+$ext$;
+
+-- The request roles must be able to traverse the schema those functions live
+-- in. Supabase grants this by default; a stock instance does not, and without
+-- it `authenticated` creating a table fails with
+-- `permission denied for schema extensions` one step after the F02 grants.
+GRANT USAGE ON SCHEMA extensions TO anon, authenticated, service_role;
+
+-- Best effort: make the two entry points explicitly executable by the request
+-- roles instead of relying on PostgreSQL's built-in EXECUTE-to-PUBLIC, which
+-- F14 shows is not something to lean on. On a managed platform the extension's
+-- functions may be owned by a role we cannot grant on; that is not fatal (the
+-- built-in PUBLIC grant still applies there), so it degrades to a NOTICE.
+DO $ext_grant$
+BEGIN
+  EXECUTE 'GRANT EXECUTE ON FUNCTION extensions.gen_random_bytes(INTEGER) '
+          'TO anon, authenticated, service_role';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE
+    'could not grant EXECUTE on extensions.gen_random_bytes(integer) (%); '
+    'relying on the platform''s own grant.', SQLERRM;
+END
+$ext_grant$;
+
+-- Self-check: the three post-conditions above, asserted rather than assumed.
+-- Everything downstream of this file (QR tokens, order public codes, the
+-- duplicate-payload fingerprint) is unrecoverable without them, so failing here
+-- is strictly better than failing in migration 03, 06, 08 or 13.
+DO $ext_check$
+BEGIN
+  IF to_regprocedure('extensions.gen_random_bytes(integer)') IS NULL THEN
+    RAISE EXCEPTION
+      'doc 01 §2 violated: extensions.gen_random_bytes(integer) does not resolve; '
+      'migrations 03/06/08 call it schema-qualified for QR tokens and public codes'
+      USING ERRCODE = 'undefined_function';
+  END IF;
+
+  IF to_regprocedure('extensions.digest(text,text)') IS NULL THEN
+    RAISE EXCEPTION
+      'doc 01 §2 violated: extensions.digest(text,text) does not resolve; '
+      'migration 13 calls it for the duplicate-payload fingerprint (doc 02 §5.2)'
+      USING ERRCODE = 'undefined_function';
+  END IF;
+
+  IF NOT has_schema_privilege('authenticated', 'extensions', 'USAGE')
+     OR NOT has_schema_privilege('anon', 'extensions', 'USAGE') THEN
+    RAISE EXCEPTION
+      'F02/F15: anon and authenticated need USAGE on schema extensions — '
+      'public.generate_qr_token() is SECURITY INVOKER and is the DEFAULT of '
+      'public.tables.qr_token'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF NOT has_function_privilege('authenticated',
+                                'extensions.gen_random_bytes(integer)', 'EXECUTE') THEN
+    RAISE WARNING
+      'authenticated cannot execute extensions.gen_random_bytes(integer); '
+      'creating a public.tables row will fail on the qr_token DEFAULT (F02)';
+  END IF;
+END
+$ext_check$;
 
 -- gen_random_uuid() is in core PostgreSQL 13+; no extension needed for it.
 -- gen_random_bytes() comes from pgcrypto and IS needed (QR tokens, order public codes).
