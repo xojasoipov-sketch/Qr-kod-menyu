@@ -24,9 +24,6 @@ const nextConfig: NextConfig = {
       ? [{ protocol: 'https', hostname: supabaseHost, pathname: '/storage/v1/object/public/**' }]
       : [],
   },
-  eslint: {
-    dirs: ['src'],
-  },
   async headers() {
     return [
       {
