@@ -1,0 +1,946 @@
+/* ────────────────────────────────────────────────────────────────────────────
+   src/app/globals.css — Restaurant QR OS design system
+   Tailwind CSS v4, CSS-first. There is no tailwind.config.js and there never will be
+   (04-design-system.md §12 C-14).
+
+   Layout of this file, in source order — the order is the cascade and is load-bearing:
+
+     1. Variants               @custom-variant dark / customer / kds / admin
+     2. Ramps + geometry       @theme        — the ONLY place a colour literal appears
+     3. Semantic namespace     @theme inline — utilities that re-resolve per theme/surface
+     4. Theme mappings         @layer base   — light on :root, dark once, then surfaces
+     5. Preference overrides   prefers-contrast / prefers-reduced-transparency
+     6. Element base           resets, selection, focus ring, scrollbars
+     7. Keyframes              §7.6
+     8. Reduced motion         §7.8
+     9. Utilities              §7.7 (+ the three amendments recorded there)
+
+   Source: docs/architecture/04-design-system.md §§2, 3, 4.4, 7.6–7.8, 9.6, 10.5.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   1. VARIANTS  (§2)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* `dark:` follows our explicit attribute, not the OS, because the customer app is
+   dark-committed and must never be flipped by a phone's OS setting.
+   The OS preference is resolved to a concrete `data-theme` before first paint by
+   src/lib/theme/theme-script.ts (§3.5) — which is why the dark palette below is
+   written exactly once instead of twice. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Surface variants — for the handful of primitives that genuinely differ per surface
+   (Button padding, Card radius). Prefer semantic tokens over these variants. */
+@custom-variant customer (&:where([data-surface="customer"], [data-surface="customer"] *));
+@custom-variant kds (&:where([data-surface="kitchen"],  [data-surface="kitchen"] *));
+@custom-variant admin (&:where([data-surface="admin"],    [data-surface="admin"] *));
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   2. @theme — ramps, typography, geometry, motion, texture  (§2)
+
+   `static` so every token is emitted to :root whether or not a utility consumed it.
+   Half of this file's tokens (--z-*, --space-*, --measure-*, --texture-*, --scrim-*)
+   are read through var() by components and by the mappings below, never through a
+   generated utility, and Tailwind's usage-based pruning would drop them.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@theme static {
+  /* ══════════════════════════════════════════════════════════════════════════
+     2.1 COLOUR RAMPS — the only place a colour literal may appear.
+         Nothing else in the codebase writes a hex, rgb(), hsl() or oklch() value.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  /* Tailwind's stock palette is removed. A `bg-slate-700` or `text-blue-500`
+     anywhere in this codebase is a build error, which is exactly what we want. */
+  --color-*: initial;
+
+  --color-black: #000000;   /* only for `--surface-sunken` in the KDS and QR modules */
+  --color-white: #ffffff;   /* only for the QR quiet zone. Never a UI ground. */
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* ── ink — warm near-neutral. Hue drifts 80° → 60° as it darkens so the deep
+        end reads as candle-lit charcoal, not as blue-black. Carries every ground,
+        every hairline and every piece of body copy on all three surfaces. ── */
+  --color-ink-25:  oklch(0.987 0.003 80);  /* #fcfbf8 */
+  --color-ink-50:  oklch(0.972 0.004 80);  /* #f7f5f3 */
+  --color-ink-100: oklch(0.945 0.006 80);  /* #efece8 */
+  --color-ink-200: oklch(0.900 0.008 78);  /* #e1ddd8 */
+  --color-ink-300: oklch(0.830 0.010 76);  /* #cbc6c0 */
+  --color-ink-400: oklch(0.730 0.011 74);  /* #aca7a0 */
+  --color-ink-500: oklch(0.620 0.012 72);  /* #8b857e */
+  --color-ink-600: oklch(0.505 0.012 70);  /* #69645d */
+  --color-ink-700: oklch(0.395 0.011 68);  /* #4a4540 */
+  --color-ink-800: oklch(0.295 0.010 66);  /* #302c27 */
+  --color-ink-850: oklch(0.245 0.009 66);  /* #23201c */
+  --color-ink-900: oklch(0.195 0.008 64);  /* #181411 */
+  --color-ink-950: oklch(0.152 0.007 62);  /* #0e0b09 */
+  --color-ink-975: oklch(0.124 0.006 60);  /* #080605 */
+
+  /* ── gold — the warm brass accent. Peak chroma sits at 500, which is the fill
+        colour of the customer primary button. 700–950 are the "bronze" end used
+        on light grounds where a bright gold would fail contrast. ── */
+  --color-gold-50:  oklch(0.975 0.020 88);  /* #fcf6e8 */
+  --color-gold-100: oklch(0.940 0.042 88);  /* #f7eacc */
+  --color-gold-200: oklch(0.890 0.068 88);  /* #eed9a8 */
+  --color-gold-300: oklch(0.845 0.094 87);  /* #e7c983 */
+  --color-gold-400: oklch(0.800 0.114 86);  /* #deb862 */
+  --color-gold-500: oklch(0.758 0.128 85);  /* #d6a944 */
+  --color-gold-600: oklch(0.690 0.124 82);  /* #c19331 */
+  --color-gold-700: oklch(0.590 0.110 78);  /* #a17422 */
+  --color-gold-800: oklch(0.470 0.090 74);  /* #795215 */
+  --color-gold-900: oklch(0.360 0.068 70);  /* #54360e */
+  --color-gold-950: oklch(0.255 0.046 68);  /* #311e07 */
+
+  /* ── wine — the deep secondary. Sets the mood behind hero imagery, fills the
+        admin primary button (where gold cannot reach 4.5:1 on a light ground),
+        and tints the "featured" and "promotion" surfaces. ── */
+  --color-wine-50:  oklch(0.960 0.016 18);  /* #fdeeee */
+  --color-wine-100: oklch(0.915 0.034 18);  /* #f9dada */
+  --color-wine-200: oklch(0.845 0.060 17);  /* #f1bdbe */
+  --color-wine-300: oklch(0.755 0.088 16);  /* #e2999c */
+  --color-wine-400: oklch(0.640 0.112 15);  /* #c76e76 */
+  --color-wine-500: oklch(0.530 0.128 14);  /* #a84755 */
+  --color-wine-600: oklch(0.448 0.118 13);  /* #893342 */
+  --color-wine-700: oklch(0.372 0.100 12);  /* #6b2532 */
+  --color-wine-800: oklch(0.300 0.080 12);  /* #4e1923 */
+  --color-wine-900: oklch(0.238 0.060 12);  /* #361017 */
+  --color-wine-950: oklch(0.182 0.042 12);  /* #21090d */
+
+  /* ── success — herb green. Order ready, item available, saved. ── */
+  --color-success-100: oklch(0.935 0.040 152); /* #d7f2dd */
+  --color-success-300: oklch(0.860 0.090 152); /* #a5e3b4 */
+  --color-success-400: oklch(0.800 0.120 152); /* #7fd497 */
+  --color-success-500: oklch(0.700 0.140 152); /* #4fb772 */
+  --color-success-600: oklch(0.585 0.132 152); /* #2e9153 */
+  --color-success-700: oklch(0.480 0.112 152); /* #1c6f3c */
+  --color-success-800: oklch(0.385 0.090 152); /* #12512a */
+  --color-success-900: oklch(0.270 0.058 152); /* #0b2e18 */
+
+  /* ── warning — saffron. Late ticket, low stock, unsaved changes. ── */
+  --color-warning-100: oklch(0.945 0.046 80); /* #fdeacb */
+  --color-warning-300: oklch(0.890 0.100 79); /* #ffd38e */
+  --color-warning-400: oklch(0.845 0.130 78); /* #fbc162 */
+  --color-warning-500: oklch(0.775 0.150 75); /* #eda62e */
+  --color-warning-600: oklch(0.680 0.148 68); /* #d38406 */
+  --color-warning-700: oklch(0.560 0.128 62); /* #a86003 */
+  --color-warning-800: oklch(0.450 0.095 64); /* #79480e */
+  --color-warning-900: oklch(0.300 0.060 68); /* #412706 */
+
+  /* ── danger — chilli. Cancelled, destructive, validation failure. ── */
+  --color-danger-100: oklch(0.935 0.032 25); /* #ffe2df */
+  --color-danger-300: oklch(0.830 0.090 26); /* #fdb1a9 */
+  --color-danger-400: oklch(0.720 0.150 27); /* #f47c70 */
+  --color-danger-500: oklch(0.620 0.190 27); /* #e24942 */
+  --color-danger-600: oklch(0.545 0.200 27); /* #cb2526 */
+  --color-danger-700: oklch(0.470 0.175 27); /* #a71a1b */
+  --color-danger-800: oklch(0.375 0.140 27); /* #7b1011 */
+  --color-danger-900: oklch(0.270 0.085 25); /* #48100f */
+
+  /* ── info — muted slate-teal. Deliberately NOT the #4F46E5 SaaS indigo that
+        §8.1 bans. Used for "preparing", neutral notices and the KDS middle lane. ── */
+  --color-info-100: oklch(0.935 0.026 228); /* #d9edf7 */
+  --color-info-300: oklch(0.845 0.055 226); /* #a7d4e8 */
+  --color-info-400: oklch(0.760 0.075 225); /* #7bbcd5 */
+  --color-info-500: oklch(0.660 0.090 228); /* #509dbe */
+  --color-info-600: oklch(0.560 0.095 232); /* #2d7ea2 */
+  --color-info-700: oklch(0.470 0.088 234); /* #196284 */
+  --color-info-800: oklch(0.380 0.075 234); /* #094864 */
+  --color-info-900: oklch(0.265 0.048 232); /* #062938 */
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     2.2 TYPOGRAPHY
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  /* The three `--font-*-var` variables are injected by next/font/google via
+     src/lib/fonts.ts, applied once to <html> by the root layout (§4.2, C-2).
+     Fallbacks are metric-adjacent so the pre-swap paint does not shift layout;
+     next/font's own adjustFontFallback face is inserted ahead of them. */
+  --font-display: var(--font-playfair-var), "Iowan Old Style", "Palatino Linotype",
+                  Georgia, "Times New Roman", serif;
+  --font-sans:    var(--font-inter-var), ui-sans-serif, system-ui, -apple-system,
+                  "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    var(--font-jetbrains-var), ui-monospace, "SF Mono", "Cascadia Mono",
+                  Menlo, Consolas, monospace;
+
+  /* ── Customer type scale (mobile-first, 16 px root) ── */
+  --text-display-xl: 2.5rem;    /* 40px */
+  --text-display-xl--line-height: 1.04;
+  --text-display-xl--letter-spacing: -0.026em;
+  --text-display-xl--font-weight: 500;
+
+  --text-display-lg: 2rem;      /* 32px */
+  --text-display-lg--line-height: 1.10;
+  --text-display-lg--letter-spacing: -0.022em;
+  --text-display-lg--font-weight: 500;
+
+  --text-display-md: 1.625rem;  /* 26px */
+  --text-display-md--line-height: 1.16;
+  --text-display-md--letter-spacing: -0.018em;
+  --text-display-md--font-weight: 500;
+
+  --text-display-sm: 1.3125rem; /* 21px */
+  --text-display-sm--line-height: 1.22;
+  --text-display-sm--letter-spacing: -0.012em;
+  --text-display-sm--font-weight: 500;
+
+  --text-title: 1.0625rem;      /* 17px — dish name on a MenuItemCard, serif */
+  --text-title--line-height: 1.28;
+  --text-title--letter-spacing: -0.008em;
+  --text-title--font-weight: 500;
+
+  --text-body-lg: 1.0625rem;    /* 17px */
+  --text-body-lg--line-height: 1.52;
+  --text-body-lg--letter-spacing: -0.002em;
+
+  --text-body: 0.9375rem;       /* 15px */
+  --text-body--line-height: 1.56;
+  --text-body--letter-spacing: 0em;
+
+  --text-body-sm: 0.84375rem;   /* 13.5px */
+  --text-body-sm--line-height: 1.50;
+  --text-body-sm--letter-spacing: 0.002em;
+
+  --text-caption: 0.75rem;      /* 12px */
+  --text-caption--line-height: 1.40;
+  --text-caption--letter-spacing: 0.012em;
+
+  --text-overline: 0.6875rem;   /* 11px — "POPULAR", "UZBEK CUISINE" */
+  --text-overline--line-height: 1.18;
+  --text-overline--letter-spacing: 0.15em;
+  --text-overline--font-weight: 600;
+
+  --text-price: 1.0625rem;      /* 17px, tabular */
+  --text-price--line-height: 1.0;
+  --text-price--letter-spacing: -0.006em;
+  --text-price--font-weight: 600;
+
+  --text-price-lg: 1.5rem;      /* 24px — cart total, product detail */
+  --text-price-lg--line-height: 1.0;
+  --text-price-lg--letter-spacing: -0.014em;
+  --text-price-lg--font-weight: 600;
+
+  /* ── Kitchen type scale. Sized for a 10.5" tablet read at 2 m. Every value here
+        is at least 1.6× its customer counterpart. Never serif. ── */
+  --text-kds-hero: 4rem;        /* 64px — table number */
+  --text-kds-hero--line-height: 1.0;
+  --text-kds-hero--letter-spacing: -0.028em;
+  --text-kds-hero--font-weight: 700;
+
+  --text-kds-xl: 2.75rem;       /* 44px — order number */
+  --text-kds-xl--line-height: 1.04;
+  --text-kds-xl--letter-spacing: -0.022em;
+  --text-kds-xl--font-weight: 700;
+
+  --text-kds-lg: 1.875rem;      /* 30px — line item name */
+  --text-kds-lg--line-height: 1.18;
+  --text-kds-lg--letter-spacing: -0.012em;
+  --text-kds-lg--font-weight: 600;
+
+  --text-kds-md: 1.5rem;        /* 24px — quantity, elapsed timer */
+  --text-kds-md--line-height: 1.24;
+  --text-kds-md--letter-spacing: -0.006em;
+  --text-kds-md--font-weight: 600;
+
+  --text-kds-sm: 1.125rem;      /* 18px — customer note */
+  --text-kds-sm--line-height: 1.34;
+  --text-kds-sm--letter-spacing: 0em;
+  --text-kds-sm--font-weight: 500;
+
+  --text-kds-label: 0.9375rem;  /* 15px — lane headers, "TABLE", "NOTE" */
+  --text-kds-label--line-height: 1.2;
+  --text-kds-label--letter-spacing: 0.11em;
+  --text-kds-label--font-weight: 700;
+
+  /* ── Admin type scale (14 px base, dense) ── */
+  --text-admin-display: 1.5rem;   /* 24px — page title */
+  --text-admin-display--line-height: 1.24;
+  --text-admin-display--letter-spacing: -0.014em;
+  --text-admin-display--font-weight: 600;
+
+  --text-admin-h2: 1.125rem;      /* 18px */
+  --text-admin-h2--line-height: 1.34;
+  --text-admin-h2--letter-spacing: -0.008em;
+  --text-admin-h2--font-weight: 600;
+
+  --text-admin-h3: 0.9375rem;     /* 15px */
+  --text-admin-h3--line-height: 1.40;
+  --text-admin-h3--letter-spacing: -0.002em;
+  --text-admin-h3--font-weight: 600;
+
+  --text-admin-body: 0.84375rem;  /* 13.5px */
+  --text-admin-body--line-height: 1.50;
+  --text-admin-body--letter-spacing: 0.002em;
+
+  --text-admin-sm: 0.78125rem;    /* 12.5px */
+  --text-admin-sm--line-height: 1.44;
+  --text-admin-sm--letter-spacing: 0.004em;
+
+  --text-admin-xs: 0.71875rem;    /* 11.5px — table column headers */
+  --text-admin-xs--line-height: 1.36;
+  --text-admin-xs--letter-spacing: 0.06em;
+  --text-admin-xs--font-weight: 600;
+
+  --text-admin-metric: 1.75rem;   /* 28px — StatCard value, tabular */
+  --text-admin-metric--line-height: 1.06;
+  --text-admin-metric--letter-spacing: -0.020em;
+  --text-admin-metric--font-weight: 600;
+
+  --text-admin-mono: 0.75rem;     /* 12px — qr_token, public_code, uuid tails */
+  --text-admin-mono--line-height: 1.40;
+  --text-admin-mono--letter-spacing: 0em;
+
+  /* Named tracking, for the cases where a utility needs it independently */
+  --tracking-tightest: -0.026em;
+  --tracking-tighter:  -0.018em;
+  --tracking-tight:    -0.010em;
+  --tracking-normal:    0em;
+  --tracking-wide:      0.05em;
+  --tracking-wider:     0.11em;
+  --tracking-widest:    0.15em;
+
+  --leading-flat:    1.0;
+  --leading-snug:    1.20;
+  --leading-normal:  1.50;
+  --leading-relaxed: 1.62;
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     2.3 GEOMETRY
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  /* Tailwind's spacing multiplier. p-4 = 16px, gap-3 = 12px, and so on. */
+  --spacing: 0.25rem;
+
+  /* Radius scale. Deliberately small: see §8.2. Anything above --radius-lg is
+     reserved for exactly one component each, named in the comment. */
+  --radius-none: 0px;
+  --radius-xs:   2px;
+  --radius-sm:   3px;
+  --radius-base: 4px;
+  --radius-md:   5px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;   /* media wells on the customer surface, only */
+  --radius-2xl:  20px;   /* BottomSheet top corners, only */
+  --radius-full: 9999px; /* pills, avatars, QuantityStepper track, only */
+
+  /* Shadow scale. Two layers maximum, ever. On dark grounds shadows are all but
+     invisible, so elevation there is carried by --elevated + --border (§3.4). */
+  --shadow-none:    none;
+  --shadow-sm:      0 1px 2px -1px oklch(0.152 0.007 62 / 0.10);
+  --shadow-md:      0 2px 6px -2px oklch(0.152 0.007 62 / 0.12),
+                    0 1px 2px -1px oklch(0.152 0.007 62 / 0.08);
+  --shadow-lg:      0 10px 28px -10px oklch(0.152 0.007 62 / 0.20);
+  --shadow-overlay: 0 24px 64px -16px oklch(0.124 0.006 60 / 0.62);
+  --inset-shadow-hairline: inset 0 1px 0 0 oklch(1 0 0 / 0.045);
+
+  /* Layout rhythm. These are not the spacing scale — they are the four gutter
+     values and the sticky-chrome heights that every page must agree on. */
+  --space-gutter-sm: 1.25rem;  /* 20px — customer phone */
+  --space-gutter-md: 1.75rem;  /* 28px — tablet */
+  --space-gutter-lg: 2rem;     /* 32px — admin desktop */
+  --space-section-sm: 2rem;    /* 32px — between customer menu sections */
+  --space-section-md: 3rem;    /* 48px */
+  --space-section-lg: 4.5rem;  /* 72px — welcome hero breathing room */
+  --space-header-h: 3.5rem;    /* 56px — customer sticky header */
+  --space-rail-h: 3rem;        /* 48px — CategoryRail */
+  --space-cartbar-h: 4rem;     /* 64px — CartBar */
+  --space-safe-bottom: calc(var(--space-cartbar-h) + env(safe-area-inset-bottom, 0px) + 0.75rem);
+  --space-admin-sidebar-w: 15rem;             /* 240px */
+  --space-admin-sidebar-w-collapsed: 3.75rem; /* 60px */
+  --space-admin-topbar-h: 3.25rem;            /* 52px */
+  --space-kds-lane-gap: 1rem;                 /* 16px */
+
+  /* Content measures — enforce them, do not eyeball line length. */
+  --measure-prose: 62ch;
+  --measure-narrow: 44ch;
+  --container-customer: 30rem;  /* 480px — the customer app never gets wider */
+
+  /* Z-index. Native <dialog> promotes Dialog/Sheet/Drawer to the browser's top
+     layer, so those tokens exist only for the non-modal fallbacks and for
+     ordering the scrims of nested non-dialog overlays. */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 100;
+  --z-rail: 110;
+  --z-cartbar: 200;
+  --z-sheet-scrim: 300;
+  --z-sheet: 310;
+  --z-dialog-scrim: 400;
+  --z-dialog: 410;
+  --z-toast: 500;
+  --z-kds-alert: 600;
+  --z-tooltip: 700;
+  --z-skip-link: 900;
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     2.4 MOTION
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  --ease-standard:   cubic-bezier(0.2, 0, 0, 1);
+  --ease-entrance:   cubic-bezier(0.16, 1, 0.3, 1);   /* out-expo */
+  --ease-exit:       cubic-bezier(0.4, 0, 1, 1);      /* in-quad */
+  --ease-out-quart:  cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out:     cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring:     cubic-bezier(0.34, 1.56, 0.64, 1);   /* visible overshoot */
+  --ease-spring-soft: cubic-bezier(0.22, 1.18, 0.36, 1);  /* ~4% overshoot */
+
+  --duration-instant: 80ms;
+  --duration-fast:    140ms;
+  --duration-base:    220ms;
+  --duration-slow:    320ms;
+  --duration-slower:  480ms;
+  --duration-deliberate: 700ms;
+
+  /* Named keyframe animations. Registered here so that `animate-shimmer`,
+     `animate-pulse-ring` and the rest exist as utilities; the @keyframes
+     themselves are declared in §7 of this file. */
+  --animate-shimmer:     shimmer 1.4s linear infinite;
+  --animate-pulse-ring:  pulse-ring 900ms var(--ease-out-quart) 2;
+  --animate-badge-bump:  badge-bump 260ms var(--ease-spring) 1;
+  --animate-sheet-in:    sheet-in 340ms var(--ease-spring-soft) 1;
+  --animate-dialog-in:   dialog-in 220ms var(--ease-entrance) 1;
+  --animate-toast-in:    toast-in 260ms var(--ease-spring-soft) 1;
+  --animate-late-blink:  late-blink 1.6s var(--ease-in-out) infinite;
+  --animate-step-breath: step-breath 2s var(--ease-out-quart) infinite;
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     2.5 TEXTURE — the CSS half of the DishArtwork system (§10)
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  /* A 128×128 tiling film-grain plate, inlined as a data: URI, which the CSP in
+     02-security-and-rls.md §8.3 permits under `img-src 'self' data: blob:`.
+     Applied only by the `.u-grain` utility, only on the customer surface (the
+     --ornament multiplier makes it a no-op elsewhere), only over photography and
+     hero grounds. Never over text. */
+  --texture-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
+  --texture-grain-opacity: 0.055;
+
+  /* Scrims. Any cream text sitting over artwork or photography sits over one of
+     these, never over the bare image — §10.5. Text over an image without a scrim
+     is a review rejection: a photograph's local luminance cannot be predicted, so
+     the measured contrast is against the scrim, not against the picture. */
+  --scrim-image-bottom: linear-gradient(to top,
+      oklch(0.124 0.006 60 / 0.94) 0%,
+      oklch(0.124 0.006 60 / 0.62) 34%,
+      oklch(0.124 0.006 60 / 0.14) 62%,
+      transparent 84%);
+  --scrim-image-flat: oklch(0.124 0.006 60 / 0.42);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   3. @theme inline — the semantic namespace  (§3.2)
+
+   `inline` is what makes theming work: a normal @theme entry bakes its value into
+   the generated utility, `inline` makes the utility emit var(--accent-strong) so it
+   re-resolves whenever a data-theme or data-surface boundary changes the mapping.
+   EVERY semantic colour token must live here. A semantic colour placed in a plain
+   @theme block is a bug that will not theme.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  /* grounds */
+  --color-surface:        var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-elevated:       var(--elevated);
+  --color-elevated-2:     var(--elevated-2);
+  --color-scrim:          var(--scrim);
+
+  /* lines */
+  --color-border:        var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-rule-gold:     var(--rule-gold);
+
+  /* text */
+  --color-text:          var(--text);
+  --color-text-muted:    var(--text-muted);
+  --color-text-subtle:   var(--text-subtle);
+  --color-text-disabled: var(--text-disabled);
+  --color-text-inverse:  var(--text-inverse);
+
+  /* brand */
+  --color-accent:          var(--accent);
+  --color-accent-strong:   var(--accent-strong);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-soft:     var(--accent-soft);
+  --color-accent-line:     var(--accent-line);
+  --color-accent-ring:     var(--accent-ring);
+  --color-wine:            var(--wine);
+  --color-wine-strong:     var(--wine-strong);
+  --color-wine-soft:       var(--wine-soft);
+
+  /* status — four families, four slots each */
+  --color-success:          var(--success);
+  --color-success-soft:     var(--success-soft);
+  --color-success-line:     var(--success-line);
+  --color-success-contrast: var(--success-contrast);
+  --color-warning:          var(--warning);
+  --color-warning-soft:     var(--warning-soft);
+  --color-warning-line:     var(--warning-line);
+  --color-warning-contrast: var(--warning-contrast);
+  --color-danger:           var(--danger);
+  --color-danger-soft:      var(--danger-soft);
+  --color-danger-line:      var(--danger-line);
+  --color-danger-contrast:  var(--danger-contrast);
+  --color-info:             var(--info);
+  --color-info-soft:        var(--info-soft);
+  --color-info-line:        var(--info-line);
+  --color-info-contrast:    var(--info-contrast);
+
+  /* KDS lane identity — the only decorative colours in the kitchen (§3.4) */
+  --color-lane-new:       var(--lane-new);
+  --color-lane-preparing: var(--lane-preparing);
+  --color-lane-ready:     var(--lane-ready);
+  --color-lane-late:      var(--lane-late);
+
+  /* per-surface geometry, so a Card does not need a `customer:` variant */
+  --radius-control: var(--r-control);
+  --radius-card:    var(--r-card);
+  --radius-media:   var(--r-media);
+
+  /* elevation, resolved per theme (shadow on light, border-lift on dark) */
+  --shadow-card:  var(--elev-card);
+  --shadow-float: var(--elev-float);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   4. THE MAPPINGS  (§3.3, §3.4)
+
+   A colour literal is written exactly once, in the ramps above. Everything here is
+   a mapping: a different set of arrows from the same ramps to the same semantic
+   names. Not one right-hand side below is a literal.
+
+   Cascade, in source order:
+     :root                                          (0,1,0)  light
+     :root:where([data-theme=dark], …)              (0,1,0)  dark — wins on order
+     :root[data-surface=…]                          (0,2,0)  surface geometry/roles
+     :root[data-surface=kitchen][data-theme=light]  (0,3,0)  the KDS glare hatch
+   Theme first, then surface. `:where()` contributes zero specificity, which is what
+   keeps the dark block from outranking the surface blocks that follow it.
+
+   prefers-color-scheme is deliberately NOT a selector anywhere: the pre-paint script
+   (§3.5) resolves the OS preference to a concrete data-theme before first paint, and
+   that is what lets the dark mapping exist exactly once rather than being duplicated
+   inside a media query — the one place a design system usually ends up with two
+   copies of its palette. An explicit data-theme therefore always wins, in both
+   directions, because it is the only thing that decides.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  /* ── LIGHT (default; also the admin light theme, and the KDS glare mode).
+        :root carries it so any page rendered outside a route-group layout
+        (/, /login, /legal, 404, 500) is correct rather than unstyled. ── */
+  :root {
+    color-scheme: light;
+
+    --surface:        var(--color-ink-50);
+    --surface-sunken: var(--color-ink-100);
+    --elevated:       var(--color-ink-25);
+    --elevated-2:     var(--color-ink-25);   /* separated by --elev-float, not by hue */
+    --scrim:          oklch(0.152 0.007 62 / 0.42);
+
+    --border:        var(--color-ink-200);
+    --border-subtle: var(--color-ink-100);
+    --border-strong: var(--color-ink-300);
+    --rule-gold:     color-mix(in oklab, var(--color-gold-700) 34%, transparent);
+
+    --text:          var(--color-ink-900);   /* 16.88:1 on --surface */
+    --text-muted:    var(--color-ink-700);   /*  8.69:1 */
+    --text-subtle:   var(--color-ink-600);   /*  5.42:1 */
+    --text-disabled: var(--color-ink-400);
+    --text-inverse:  var(--color-ink-25);
+
+    --accent:          var(--color-gold-800); /*  6.40:1 — the bronze reading of gold */
+    --accent-strong:   var(--color-wine-700); /* gold cannot carry a fill here; wine can */
+    --accent-contrast: var(--color-ink-25);   /* 10.04:1 on wine-700 */
+    --accent-soft:     color-mix(in oklab, var(--color-gold-500) 20%, var(--color-ink-25));
+    --accent-line:     color-mix(in oklab, var(--color-gold-700) 42%, transparent);
+    --accent-ring:     var(--color-wine-600); /*  7.38:1 */
+    --wine:            var(--color-wine-700);
+    --wine-strong:     var(--color-wine-700);
+    --wine-soft:       var(--color-wine-50);
+
+    --success:          var(--color-success-800);  /* 8.67:1 */
+    --success-soft:     var(--color-success-100);
+    --success-line:     color-mix(in oklab, var(--color-success-600) 34%, transparent);
+    --success-contrast: var(--color-ink-25);
+    --warning:          var(--color-warning-800);  /* 7.04:1 */
+    --warning-soft:     var(--color-warning-100);
+    --warning-line:     color-mix(in oklab, var(--color-warning-600) 34%, transparent);
+    --warning-contrast: var(--color-ink-25);
+    --danger:           var(--color-danger-800);   /* 10.09:1 */
+    --danger-soft:      var(--color-danger-100);
+    --danger-line:      color-mix(in oklab, var(--color-danger-600) 34%, transparent);
+    --danger-contrast:  var(--color-ink-25);
+    --info:             var(--color-info-800);     /* 9.10:1 */
+    --info-soft:        var(--color-info-100);
+    --info-line:        color-mix(in oklab, var(--color-info-600) 34%, transparent);
+    --info-contrast:    var(--color-ink-25);
+
+    /* KDS lanes are defined here too so --color-lane-* never resolves to nothing
+       on a non-kitchen surface; §3.4 re-points them for the kitchen itself. */
+    --lane-new:       var(--warning);
+    --lane-preparing: var(--info);
+    --lane-ready:     var(--success);
+    --lane-late:      var(--danger);
+
+    --r-control: var(--radius-md);
+    --r-card:    var(--radius-md);
+    --r-media:   var(--radius-sm);
+
+    --elev-card:  var(--shadow-sm);
+    --elev-float: var(--shadow-lg);
+
+    --focus: var(--accent-ring);
+    --focus-width: 2px;
+    --tap-min: 2.75rem;   /* 44px floor; surfaces raise it below */
+    --ornament: 0;
+  }
+
+  /* ── DARK. Written once. Reached by three doors: an explicit admin choice, the
+        customer surface (dark-committed by product decision), and the kitchen
+        surface (dark by default). Only the tokens that change are restated —
+        geometry, --focus, --tap-min and --ornament all inherit from :root. ── */
+  :root:where([data-theme="dark"], [data-surface="customer"], [data-surface="kitchen"]) {
+    color-scheme: dark;
+
+    --surface:        var(--color-ink-950);
+    --surface-sunken: var(--color-ink-975);
+    --elevated:       var(--color-ink-900);
+    --elevated-2:     var(--color-ink-850);
+    --scrim:          oklch(0.124 0.006 60 / 0.72);
+
+    --border:        var(--color-ink-800);
+    --border-subtle: var(--color-ink-850);
+    --border-strong: var(--color-ink-700);
+    --rule-gold:     color-mix(in oklab, var(--color-gold-500) 30%, transparent);
+
+    --text:          var(--color-ink-100);  /* 16.71:1 on --surface */
+    --text-muted:    var(--color-ink-400);  /*  8.20:1 */
+    --text-subtle:   var(--color-ink-500);  /*  5.38:1 */
+    --text-disabled: var(--color-ink-600);
+    --text-inverse:  var(--color-ink-975);
+
+    --accent:          var(--color-gold-400); /* 10.46:1 */
+    --accent-strong:   var(--color-gold-500);
+    --accent-contrast: var(--color-ink-975);  /*  9.29:1 on gold-500 */
+    --accent-soft:     color-mix(in oklab, var(--color-gold-500) 14%, transparent);
+    --accent-line:     color-mix(in oklab, var(--color-gold-500) 40%, transparent);
+    --accent-ring:     var(--color-gold-300); /* 12.19:1 */
+    --wine:            var(--color-wine-300); /*  8.65:1 */
+    --wine-strong:     var(--color-wine-600);
+    --wine-soft:       color-mix(in oklab, var(--color-wine-500) 18%, transparent);
+
+    --success:          var(--color-success-400);  /* 11.01:1 */
+    --success-soft:     color-mix(in oklab, var(--color-success-500) 16%, transparent);
+    --success-line:     color-mix(in oklab, var(--color-success-500) 38%, transparent);
+    --success-contrast: var(--color-ink-975);
+    --warning:          var(--color-warning-400);  /* 12.06:1 */
+    --warning-soft:     color-mix(in oklab, var(--color-warning-500) 16%, transparent);
+    --warning-line:     color-mix(in oklab, var(--color-warning-500) 38%, transparent);
+    --warning-contrast: var(--color-ink-975);
+    --danger:           var(--color-danger-400);   /*  7.42:1 */
+    --danger-soft:      color-mix(in oklab, var(--color-danger-500) 18%, transparent);
+    --danger-line:      color-mix(in oklab, var(--color-danger-500) 40%, transparent);
+    --danger-contrast:  var(--color-ink-975);
+    --info:             var(--color-info-400);     /*  9.32:1 */
+    --info-soft:        color-mix(in oklab, var(--color-info-500) 18%, transparent);
+    --info-line:        color-mix(in oklab, var(--color-info-500) 38%, transparent);
+    --info-contrast:    var(--color-ink-975);
+
+    /* On a near-black ground a drop shadow is invisible. Elevation is carried by
+       --elevated plus a 4.5%-white inset hairline along the top edge — the same
+       trick a physical object uses to catch light. */
+    --elev-card:  var(--inset-shadow-hairline);
+    --elev-float: var(--shadow-overlay);
+  }
+
+  /* ── CUSTOMER — dark-committed, gold-forward, generous. ────────────────────── */
+  :root[data-surface="customer"] {
+    --r-control: var(--radius-lg);   /*  8px — buttons and inputs */
+    --r-card:    var(--radius-md);   /*  5px — MenuItemCard */
+    --r-media:   var(--radius-xl);   /* 12px — the only place 12px is allowed */
+    --tap-min: 3rem;                 /* 48px */
+    --ornament: 1;                   /* gold hairlines + grain are on */
+  }
+
+  /* ── KITCHEN — colour means status. Gold is switched OFF: --accent becomes the
+        brightest neutral so a KDS primary button is a white slab, not a gold one.
+        Borders are one ramp step stronger than elsewhere so they carry at 2 m. ── */
+  :root[data-surface="kitchen"] {
+    --surface:        var(--color-ink-975);
+    --surface-sunken: var(--color-black);
+    --elevated:       var(--color-ink-900);
+    --elevated-2:     var(--color-ink-850);
+    --border:         var(--color-ink-700);
+    --border-strong:  var(--color-ink-600);
+    --border-subtle:  var(--color-ink-800);
+    --rule-gold:      var(--border);              /* no gold hairlines in a kitchen */
+    --text:           var(--color-ink-25);        /* 19.49:1 */
+    --text-muted:     var(--color-ink-300);       /* 11.97:1 */
+    --text-subtle:    var(--color-ink-400);       /*  8.45:1 */
+    --accent:          var(--color-ink-25);
+    --accent-strong:   var(--color-ink-25);
+    --accent-contrast: var(--color-ink-975);
+    --accent-soft:     color-mix(in oklab, var(--color-ink-25) 12%, transparent);
+    --accent-line:     color-mix(in oklab, var(--color-ink-25) 32%, transparent);
+    --accent-ring:     var(--color-ink-25);
+    --r-control: var(--radius-sm);   /* 3px */
+    --r-card:    var(--radius-sm);
+    --r-media:   var(--radius-sm);
+    --tap-min: 4rem;                 /* 64px */
+    --ornament: 0;                   /* no grain, no gold rules, no scrims */
+    /* Lane identity. These are the ONLY decorative colours in the KDS. */
+    --lane-new:       var(--color-warning-400);
+    --lane-preparing: var(--color-info-400);
+    --lane-ready:     var(--color-success-400);
+    --lane-late:      var(--color-danger-400);
+  }
+
+  /* Glare escape hatch. Some kitchens have overhead lighting that turns a glossy
+     tablet into a mirror; a dark KDS is unreadable there. The lane colours move
+     to their 800 stops so they still clear 7:1 on a light ground. Written by the
+     KDS settings sheet into localStorage['qros:kds:theme'], device-scoped. */
+  :root[data-surface="kitchen"][data-theme="light"] {
+    color-scheme: light;
+    --surface: var(--color-ink-50);      --surface-sunken: var(--color-ink-100);
+    --elevated: var(--color-ink-25);     --elevated-2: var(--color-ink-25);
+    --border: var(--color-ink-300);      --border-strong: var(--color-ink-400);
+    --border-subtle: var(--color-ink-200);
+    --text: var(--color-ink-950);        /* 18.10:1 */
+    --text-muted: var(--color-ink-700);  /*  8.69:1 */
+    --text-subtle: var(--color-ink-600);
+    --accent: var(--color-ink-950);          --accent-strong: var(--color-ink-950);
+    --accent-contrast: var(--color-ink-25);  --accent-ring: var(--color-ink-950);
+    --success: var(--color-success-800); --warning: var(--color-warning-800);
+    --danger:  var(--color-danger-800);  --info:    var(--color-info-800);
+    --success-soft: var(--color-success-100); --warning-soft: var(--color-warning-100);
+    --danger-soft:  var(--color-danger-100);  --info-soft:    var(--color-info-100);
+    --success-line: color-mix(in oklab, var(--color-success-600) 34%, transparent);
+    --warning-line: color-mix(in oklab, var(--color-warning-600) 34%, transparent);
+    --danger-line:  color-mix(in oklab, var(--color-danger-600) 34%, transparent);
+    --info-line:    color-mix(in oklab, var(--color-info-600) 34%, transparent);
+    --success-contrast: var(--color-ink-25); --warning-contrast: var(--color-ink-25);
+    --danger-contrast:  var(--color-ink-25); --info-contrast:    var(--color-ink-25);
+    --lane-new: var(--color-warning-800);      /*  7.04:1 */
+    --lane-preparing: var(--color-info-800);   /*  9.10:1 */
+    --lane-ready: var(--color-success-800);    /*  8.67:1 */
+    --lane-late: var(--color-danger-800);      /* 10.09:1 */
+    --elev-card: var(--shadow-sm); --elev-float: var(--shadow-lg);
+  }
+
+  /* ── ADMIN — dense, square, quiet. Colour comes from the theme blocks above;
+        this block only changes geometry and root font size. ────────────────── */
+  :root[data-surface="admin"] {
+    --r-control: var(--radius-sm);    /* 3px */
+    --r-card:    var(--radius-base);  /* 4px */
+    --r-media:   var(--radius-sm);
+    --tap-min: 2rem;                  /* 32px visual; IconButton pads the hit area to 44 */
+    --ornament: 0;
+    font-size: 87.5%;                 /* 14px base for the whole admin surface */
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     5. PREFERENCE OVERRIDES  (§9.6)
+
+     Progressive enhancement only: the base experience already passes §9.1 without
+     them, and neither may be used to rescue a failing contrast pair (R-8). Note
+     that no colour is DEFINED here — each of these only re-points one semantic
+     name at another semantic name that is already defined above.
+
+     The selector lists exist to out-specify the surface blocks: :root is (0,1,0)
+     and would lose to :root[data-surface="kitchen"] (0,2,0), so each level of the
+     cascade above gets a matching entry here.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  @media (prefers-contrast: more) {
+    :root,
+    :root[data-surface],
+    :root[data-surface][data-theme] {
+      --border: var(--border-strong);
+      --text-muted: var(--text);
+      --focus-width: 3px;
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   6. ELEMENT BASE  (§4.4, §9.3)
+   Tailwind's preflight has already normalised margins, box-sizing and media
+   defaults; this block adds only what preflight does not.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;   /* never fake a weight we did not load */
+    /* No grey flash under a finger: :active and :focus-visible carry the feedback. */
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Serif is opt-in, always, everywhere (T1). A heading inherits the sans stack
+     until a component asks for `font-display`. */
+  h1, h2, h3, h4 { font-family: inherit; font-weight: 600; }
+
+  ::selection { background: var(--color-accent-soft); color: var(--color-text); }
+  ::placeholder { color: var(--color-text-subtle); opacity: 1; }
+
+  /* outline — not box-shadow — so the ring follows border-radius and survives
+     overflow: hidden. `outline: none` appears nowhere else in this codebase. */
+  :focus-visible {
+    outline: var(--focus-width) solid var(--focus);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  :focus:not(:focus-visible) { outline: none; }
+
+  [hidden] { display: none !important; }
+
+  /* Scrollbars. Thin, token-coloured, and never a decorative element in their own
+     right. WebKit needs the pseudo-elements; Firefox uses scrollbar-* on html. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background-color: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    border: 3px solid transparent;
+    border-radius: var(--radius-full);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-subtle); }
+  ::-webkit-scrollbar-corner { background-color: transparent; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   7. KEYFRAMES  (§7.6)
+   Referenced by the --animate-* tokens above. Transform and opacity only, with the
+   two documented exceptions (pulse-ring's box-shadow, shimmer's background-position)
+   which have no transform equivalent.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  @keyframes shimmer     { from { background-position: -160% 0 } to { background-position: 260% 0 } }
+  @keyframes pulse-ring  { 0%   { box-shadow: 0 0 0 0 var(--lane-new) }
+                           100% { box-shadow: 0 0 0 10px transparent } }
+  @keyframes badge-bump  { 0%   { transform: scale(1) }
+                           45%  { transform: scale(1.28) }
+                           100% { transform: scale(1) } }
+  @keyframes sheet-in    { from { transform: translateY(100%) } to { transform: translateY(0) } }
+  @keyframes dialog-in   { from { opacity: 0; transform: translateY(8px) scale(0.98) }
+                           to   { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes toast-in    { from { opacity: 0; transform: translateY(12px) scale(0.98) }
+                           to   { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes late-blink  { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+  @keyframes step-breath { 0%   { transform: scale(1); opacity: 0.5 }
+                           100% { transform: scale(1.35); opacity: 0 } }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   8. REDUCED MOTION  (§7.8)
+   The rule is not "turn everything off". Motion that communicates causality is kept
+   and shortened; motion that decorates is removed. Reduced motion is never reduced
+   INFORMATION — every call site that drops an animation substitutes a live-region
+   sentence or a static state marker in its place (§7.8 table).
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Kept, because they carry meaning rather than decorate: */
+  .rm-keep-fade { transition-duration: 100ms !important; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   9. UTILITIES  (§7.7)
+   The complete set. No other custom utility may be added without adding it here.
+   Three entries below are amendments to §7.7, each mandated by prose elsewhere in
+   the design system and marked [AMENDMENT] with its source section.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  /* Tabular figures — every price, timer, quantity and order number (T8). */
+  .u-tnum { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+
+  /* Optical alignment of a lucide icon against adjacent text (§5). */
+  .u-icon-align { transform: translateY(-0.5px); flex: none; }
+
+  /* Film grain. Customer surface only; the --ornament multiplier makes it a no-op
+     elsewhere without a second selector. */
+  .u-grain { position: relative; isolation: isolate; }
+  .u-grain::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background-image: var(--texture-grain); background-repeat: repeat;
+    opacity: calc(var(--ornament) * var(--texture-grain-opacity));
+    mix-blend-mode: overlay;
+  }
+
+  /* [AMENDMENT §10.5] The two scrims, as classes. Cream text over artwork or a
+     photograph sits over one of these, never over the bare image. They are here
+     rather than in a component because the alternative is arbitrary-value syntax
+     in a component, which §8.13 and C-6 ban. */
+  .u-scrim-bottom { background-image: var(--scrim-image-bottom); }
+  .u-scrim-flat   { background-color: var(--scrim-image-flat); }
+
+  /* [AMENDMENT §8.4 + §9.6] The only blur in the product. Permitted on exactly two
+     elements: the sticky customer header + CategoryRail, and the CartBar. Bundling
+     the effect, its @supports fallback and its reduced-transparency fallback into
+     one class is what keeps "glassmorphism everywhere" from being one copy-paste
+     away. */
+  .u-chrome-blur {
+    background-color: color-mix(in oklab, var(--color-surface) 82%, transparent);
+    -webkit-backdrop-filter: blur(12px) saturate(1.08);
+            backdrop-filter: blur(12px) saturate(1.08);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .u-chrome-blur { background-color: var(--color-surface); }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .u-chrome-blur {
+      -webkit-backdrop-filter: none;
+              backdrop-filter: none;
+      background-color: var(--color-elevated);
+    }
+  }
+
+  /* Scroll-rail edge fade. A mask, not an overlay div — it works on any ground. */
+  .u-edge-fade {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px,
+                        #000 calc(100% - 16px), transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 16px,
+                        #000 calc(100% - 16px), transparent 100%);
+  }
+
+  /* Reserve room for the CartBar on every scrollable customer page. */
+  .customer-scroll { padding-block-end: var(--space-safe-bottom); }
+
+  /* Line clamps. Two values only; a 3-line clamp means the copy is too long. */
+  .u-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .u-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* The gold hairline. Three permitted sites: under the CategoryRail, under a Sheet
+     header, above the CartBar. Renders as a plain --border elsewhere via --rule-gold. */
+  .u-rule-gold { border-color: var(--color-rule-gold); }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+}
