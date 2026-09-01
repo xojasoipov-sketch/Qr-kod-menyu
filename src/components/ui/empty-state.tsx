@@ -20,7 +20,6 @@ import type { ElementType, ReactNode } from 'react';
 import Link from 'next/link';
 
 import { cn } from '@/lib/utils/cn';
-import { buttonClasses } from './button';
 
 export type EmptyStateSize = 'sm' | 'md';
 export type EmptyStateAlign = 'start' | 'center';
@@ -64,6 +63,30 @@ export interface EmptyStateProps {
   children?: ReactNode;
   className?: string;
 }
+
+/**
+ * The action is styled here rather than through `buttonClasses()`, deliberately:
+ * button.tsx is a 'use client' module, and every export of a client module — a
+ * plain string helper included — becomes a client reference that a Server
+ * Component cannot call. These classes are the same tokens Button's `primary`
+ * and `link` variants use; if Button's variants change, change them here too.
+ */
+const ACTION_BASE =
+  'inline-flex select-none items-center justify-center gap-2 rounded-control font-medium ' +
+  'whitespace-nowrap min-h-(--tap-min) ' +
+  'transition-[color,background-color,filter,transform] duration-(--duration-fast) ' +
+  'ease-standard active:scale-98';
+
+const ACTION_PRIMARY =
+  'bg-accent-strong text-accent-contrast hover:brightness-108 active:brightness-95';
+
+const ACTION_LINK =
+  'text-accent underline underline-offset-4 decoration-accent-line hover:decoration-accent';
+
+const ACTION_SIZE: Record<EmptyStateSize, string> = {
+  sm: 'h-8 px-3 text-body-sm',
+  md: 'h-10 px-4 text-body',
+};
 
 const ROOT_SIZE: Record<EmptyStateSize, string> = {
   sm: 'gap-3 py-6',
@@ -142,7 +165,7 @@ export function EmptyState({
           {secondaryAction !== undefined && (
             <Link
               href={secondaryAction.href}
-              className={buttonClasses({ variant: 'link', size: size === 'sm' ? 'sm' : 'md' })}
+              className={cn(ACTION_BASE, ACTION_SIZE[size], ACTION_LINK, 'px-0')}
             >
               {secondaryAction.label}
             </Link>
@@ -166,15 +189,11 @@ function EmptyStateActionControl({
   action: EmptyStateAction;
   size: EmptyStateSize;
 }): React.JSX.Element | null {
-  const buttonSize = size === 'sm' ? 'sm' : 'md';
+  const className = cn(ACTION_BASE, ACTION_SIZE[size], ACTION_PRIMARY);
 
   if (action.onClick !== undefined) {
     return (
-      <button
-        type="button"
-        onClick={action.onClick}
-        className={buttonClasses({ variant: 'primary', size: buttonSize })}
-      >
+      <button type="button" onClick={action.onClick} className={className}>
         {action.label}
       </button>
     );
@@ -182,10 +201,7 @@ function EmptyStateActionControl({
 
   if (action.href !== undefined) {
     return (
-      <Link
-        href={action.href}
-        className={buttonClasses({ variant: 'primary', size: buttonSize })}
-      >
+      <Link href={action.href} className={className}>
         {action.label}
       </Link>
     );

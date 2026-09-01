@@ -147,8 +147,11 @@ TO authenticated;
 -- a future SECURITY DEFINER writer that sets app.guard_bypass; a column
 -- privilege has none of those escape hatches. Every list below omits money,
 -- identity, tenant keys, bearer tokens, GENERATED columns and audit/attribution
--- columns, so the audited exploits come back as 42501 "permission denied for
--- column" rather than as a business-rule error.
+-- columns, so the audited exploits come back as SQLSTATE 42501 (PostgreSQL
+-- words it "permission denied for table <t>" when the statement names a column
+-- the role was not granted) rather than as a business-rule error. Verified:
+-- every exploit in F05, F07, F11 and F13 now fails this way with the guard
+-- triggers still installed, and fails identically without them.
 --
 -- What PostgreSQL can and cannot express here (the reason some rules stay in
 -- the triggers and are not duplicated as grants):
@@ -240,8 +243,11 @@ GRANT DELETE ON public.tables TO authenticated;
 -- feature. NOTE, and this is the load-bearing caveat of this whole section: the
 -- same policy also admits KITCHEN of the branch, and a column-level grant is
 -- one ACL on one table that CANNOT vary by role. Narrowing KITCHEN to
--- is_available / unavailable_until ("86 this dish") is therefore NOT expressible
--- here and is enforced by trg_menu_items_guard() (§3.18). What the grant closes
+-- is_available alone ("86 this dish") is therefore NOT expressible here and is
+-- enforced by trg_menu_items_guard() (§3.18), which whole-row-diffs the update
+-- and allows a kitchen account exactly that one column. Verified: with that
+-- trigger dropped, a KITCHEN account CAN still set price through this grant —
+-- the one audited exploit this layer provably cannot cover on its own. What the grant closes
 -- for every role, trigger or no trigger: id / restaurant_id / branch_id
 -- (identity and tenancy), popularity_score (a system-maintained sales counter),
 -- search_vector (GENERATED — writable by nobody) and created_at / updated_at.
