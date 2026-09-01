@@ -24,12 +24,7 @@ import type {
   MenuItemOptionInput,
   ReorderInput,
 } from '@/lib/validation/menu'
-import type {
-  MenuCategoryRow,
-  MenuItemOptionRow,
-  MenuItemRow,
-  StaffRole,
-} from '@/types/database'
+import type { MenuCategoryRow, MenuItemRow, StaffRole } from '@/types/database'
 import type { MenuCategoryView, MenuItemView, StaffSession } from '@/types/domain'
 import type { I18nText } from '@/types/i18n'
 

@@ -81,12 +81,18 @@ INSERT INTO qros_t02.part VALUES ('0. setup');
 
 CREATE FUNCTION qros_t02.record(p_name text, p_status text, p_detail text DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql AS $fn$
-DECLARE v_part text;
+DECLARE v_part text; v_detail text := p_detail;
 BEGIN
+  -- A catastrophic regression (say, order_transition_allowed rewritten to
+  -- `SELECT true`) produces a 200-entry list; keep the log readable.
+  IF length(v_detail) > 600 THEN
+    v_detail := left(v_detail, 600)
+             || format(' ... (+%s more characters)', length(p_detail) - 600);
+  END IF;
   SELECT cur INTO v_part FROM qros_t02.part;
   INSERT INTO qros_t02.results (part, name, status, detail)
-  VALUES (v_part, p_name, p_status, p_detail);
-  RAISE NOTICE '%  %  %', rpad(p_status, 4), rpad(p_name, 62), COALESCE(p_detail, '');
+  VALUES (v_part, p_name, p_status, v_detail);
+  RAISE NOTICE '%  %  %', rpad(p_status, 4), rpad(p_name, 62), COALESCE(v_detail, '');
 END $fn$;
 
 CREATE FUNCTION qros_t02.assert(p_name text, p_cond boolean, p_detail text DEFAULT NULL)
@@ -216,10 +222,12 @@ END $fn$;
 -- session (that is setup, not a test); every ASSERTION below goes through
 -- run_as()/call_json() as anon or authenticated.
 --
--- B_MAIN sets order_min_interval_seconds = 0 so the per-table order cooldown
--- (a separate control, exercised by test file 01's scope) does not mask the
--- pricing and payload assertions here. The waiter-call cooldown is left at its
--- default 90s because part 9 tests it directly.
+-- B_MAIN sets order_min_interval_seconds = 0 so the per-table ORDER cooldown does
+-- not mask the pricing and payload assertions, which need several orders inside
+-- one transaction. That cooldown is not skipped, only moved: branch 'Rate'
+-- (table 19) keeps the default 20s and part 9.7 asserts it there. The
+-- waiter-call cooldown is left at its default 90s throughout, because part 9
+-- tests it directly.
 -- =============================================================================
 
 INSERT INTO public.restaurants
@@ -244,7 +252,9 @@ VALUES
   ('02000000-0000-4000-8100-000000000004', '02000000-0000-4000-8000-000000000002',
    'Rival',   'A', 'UTC', 90, 30, 0, true,  true),
   ('02000000-0000-4000-8100-000000000005', '02000000-0000-4000-8000-000000000003',
-   'Dead',    'A', 'UTC', 90, 30, 0, true,  true);
+   'Dead',    'A', 'UTC', 90, 30, 0, true,  true),
+  ('02000000-0000-4000-8100-000000000006', '02000000-0000-4000-8000-000000000001',
+   'Rate',    'D', 'UTC', 90, 30, 20, true, true);   -- 20s order cooldown, part 9.7
 
 INSERT INTO public.menu_categories (id, restaurant_id, branch_id, name)
 VALUES
@@ -288,7 +298,8 @@ VALUES
   ('02000000-0000-4000-8400-000000000015','02000000-0000-4000-8000-000000000001','02000000-0000-4000-8100-000000000001','15', 'T02TOK0000000000000015', true),
   ('02000000-0000-4000-8400-000000000016','02000000-0000-4000-8000-000000000001','02000000-0000-4000-8100-000000000001','16', 'T02TOK0000000000000016', true),
   ('02000000-0000-4000-8400-000000000017','02000000-0000-4000-8000-000000000001','02000000-0000-4000-8100-000000000001','17', 'T02TOK0000000000000017', true),
-  ('02000000-0000-4000-8400-000000000018','02000000-0000-4000-8000-000000000002','02000000-0000-4000-8100-000000000004','1',  'T02TOK0000000000000018', true);
+  ('02000000-0000-4000-8400-000000000018','02000000-0000-4000-8000-000000000002','02000000-0000-4000-8100-000000000004','1',  'T02TOK0000000000000018', true),
+  ('02000000-0000-4000-8400-000000000019','02000000-0000-4000-8000-000000000001','02000000-0000-4000-8100-000000000006','19', 'T02TOK0000000000000019', true);
 
 -- Staff. auth.users rows create the profiles through trg_auth_user_created.
 INSERT INTO auth.users (id, email) VALUES
@@ -1647,6 +1658,28 @@ SELECT qros_t02.expect_error(
   $q$UPDATE public.tables SET qr_token = 'aaaaaaaaaaaaaaaaaaaaaa'
       WHERE id = '02000000-0000-4000-8400-000000000011'$q$,
   NULL, NULL, '02000000-0000-4000-8500-000000000002', 'authenticated');
+
+-- 9.7 — the ORDER cooldown, the waiter call's sibling control (doc 02 §5.2:
+--       branches.order_min_interval_seconds, read under SELECT ... FOR UPDATE).
+DO $t$
+DECLARE v jsonb;
+BEGIN
+  v := qros_t02.call_json(NULL, 'anon', $q$
+    SELECT public.public_place_order('T02TOK0000000000000019',
+      '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":1}]'::jsonb,
+      NULL, NULL)$q$);
+  PERFORM qros_t02.assert('order cooldown: the first order from a table is accepted',
+    v ->> 'status' = 'pending', v ->> 'order_number');
+END $t$;
+
+-- A DIFFERENT payload, so the refusal below is the cooldown and not the 60s
+-- duplicate-payload guard (QR013).
+SELECT qros_t02.expect_error(
+  'order cooldown: a second order inside the window is refused',
+  $q$SELECT public.public_place_order('T02TOK0000000000000019',
+       '[{"menu_item_id":"02000000-0000-4000-8300-000000000002","quantity":2}]'::jsonb,
+       NULL, NULL)$q$,
+  'QR010_ORDER_RATE_LIMITED', 'PT429', NULL, 'anon');
 
 DO $t$
 DECLARE v public.tables%ROWTYPE;
