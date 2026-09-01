@@ -29,7 +29,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { isSupabaseConfigured, requireSupabasePublicConfig } from '@/lib/env';
+import { isDemoMode, isSupabaseConfigured, requireSupabasePublicConfig } from '@/lib/env';
 import { LOCALE_COOKIE, isLocale } from '@/lib/i18n/config';
 import { localeCookieOptions } from '@/lib/i18n/resolve-locale';
 import type { Database } from '@/types/database';
@@ -174,7 +174,14 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   /* 4. The coarse gate. UX only — every route below re-authorizes.         */
   /* --------------------------------------------------------------------- */
 
-  if (user === null && !isPublicPath(pathname)) {
+  // Demo mode: there is no auth server, so `user` is always null here — but
+  // @/lib/auth/session.ts's getStaffContext() resolves a synthetic
+  // demoStaffContext() for exactly this case, so a staff route is reachable
+  // and correctly scoped once the request gets past this coarse gate. Without
+  // this branch every staff surface bounced to /login even in demo mode,
+  // silently breaking the product's "explorable with no .env.local" promise
+  // for anything but the customer menu.
+  if (user === null && !isDemoMode() && !isPublicPath(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = '';

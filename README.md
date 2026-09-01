@@ -65,6 +65,10 @@ cp .env.example .env.local     # optional — see below
 npm run dev
 ```
 
+Opens on **http://localhost:5000** — `dev` and `start` both pin port 5000
+(`next dev -p 5000` / `next start -p 5000`) instead of Next's default 3000.
+Override for one run with `npm run dev -- -p <port>`.
+
 ### Demo mode
 
 With **no** Supabase variables set, the app serves an in-repo fixture restaurant
