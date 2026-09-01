@@ -103,7 +103,6 @@ export function CartProvider({ context, children }: CartProviderProps): React.JS
     const now = new Date().toISOString()
     setState(loadCart(context.token, contextRef.current, now))
     setHydrated(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [context.token])
 
   useEffect(() => {

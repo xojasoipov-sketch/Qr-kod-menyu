@@ -27,7 +27,8 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import type { User } from '@supabase/supabase-js';
 
-import { isSupabaseConfigured } from '@/lib/env';
+import { isDemoMode, isSupabaseConfigured } from '@/lib/env';
+import { demoStaffContext } from '@/lib/demo/demo-mode';
 import { createServerClient, type ServerSupabaseClient } from '@/lib/supabase/server';
 import type { AppLocale, Json, StaffRole } from '@/types/database';
 import type { StaffSession } from '@/types/domain';
@@ -296,6 +297,14 @@ export async function loadStaffContext(
  * `staff` row. Every staff page starts here.
  */
 export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
+  // Demo mode: no Supabase project, therefore no `staff` row to read. Without
+  // this branch every staff guard (requireStaffContext, requireRole,
+  // requireCapability, requirePlatformAdmin) redirects to /login, and
+  // /kitchen, /waiter and /admin are unreachable — silently breaking the
+  // product's own promise that the whole system, not just the customer menu,
+  // is explorable with no `.env.local` at all.
+  if (isDemoMode()) return demoStaffContext();
+
   const user = await getSession();
   if (user === null) return null;
 

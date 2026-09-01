@@ -17,6 +17,7 @@
  */
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 import { Home } from 'lucide-react';
 
 import { ErrorState } from '@/components/ui/error-state';
@@ -48,13 +49,13 @@ export default function AppError({
           retryLabel={t('common.retry')}
           traceId={error.digest}
         />
-        <a
+        <Link
           href="/"
           className="inline-flex min-h-(--tap-min) items-center gap-2 text-body-sm text-accent underline decoration-accent-line underline-offset-4 hover:decoration-accent"
         >
           <Home aria-hidden="true" focusable="false" strokeWidth={1.75} className="size-4" />
           {t('errors.generic.goHome')}
-        </a>
+        </Link>
       </div>
     </main>
   );

@@ -39,13 +39,19 @@ export interface StateCopy {
   body: string;
 }
 
+// `import type` pulls in only the name `dictionary`, purely for the `typeof`
+// below — nothing runtime is bundled here, the same guarantee the old inline
+// `import('./dictionaries/en')` type gave, in the form the lint config's
+// consistent-type-imports rule wants at the top of the file.
+import type { dictionary as englishDictionary } from './dictionaries/en';
+
 /**
  * One locale's complete message catalogue — 884 leaf strings.
  *
- * Written as a `typeof` of the English module so there is exactly one place a key
- * is declared. The `import(...)` is a type-only import: nothing is bundled here.
+ * Written as a `typeof` of the English module so there is exactly one place a
+ * key is declared.
  */
-export type Dictionary = typeof import('./dictionaries/en').dictionary;
+export type Dictionary = typeof englishDictionary;
 
 /** doc 03 / doc 05 call the catalogue `Messages`. Same thing. */
 export type Messages = Dictionary;

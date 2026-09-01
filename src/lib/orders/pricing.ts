@@ -1,5 +1,5 @@
 // src/lib/orders/pricing.ts
-import { applyBps, sumMoney, multiplyMoney, type Money } from '@/lib/money';
+import { applyBps, sumMoney, multiplyMoney } from '@/lib/money';
 import type { CartLine, CartTotals } from '@/types/domain';
 
 export interface FeeConfig {

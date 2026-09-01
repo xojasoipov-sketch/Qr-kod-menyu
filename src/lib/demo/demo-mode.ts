@@ -74,6 +74,9 @@ import type {
   StaffSession,
   WaiterCallView,
 } from '@/types/domain'
+// Type-only: erased at compile time (verbatimModuleSyntax), so this does not
+// create a runtime cycle with @/lib/auth/session importing demoStaffContext.
+import type { StaffBranch, StaffContext, StaffMembership, StaffRestaurant } from '@/lib/auth/session'
 import type { I18nText } from '@/types/i18n'
 
 import {
@@ -149,6 +152,65 @@ export function demoStaffSession(): StaffSession {
     email: null,
     avatarUrl: null,
     locale: FIXTURES.restaurant.default_locale,
+  }
+}
+
+/**
+ * The full `StaffContext` `getStaffContext()` builds this from, so every guard
+ * in `@/lib/auth/guards.ts` — `requireStaffContext`, `requireRole`,
+ * `requireCapability`, `requirePlatformAdmin`, `requireBranchAccess` — passes
+ * exactly as it would for a real RESTAURANT_OWNER with no branch pin, and every
+ * staff surface renders instead of redirecting to `/login`.
+ *
+ * Restaurant-wide on purpose (`membership.branchId: null`, both fixture
+ * branches in scope): a demo visitor should see the branch switcher and both
+ * `Chorsu` and `Yunusobod` work, the way an owner actually would.
+ */
+export function demoStaffContext(): StaffContext {
+  const session = demoStaffSession()
+  const membership: StaffMembership = {
+    staffId: session.staffId,
+    restaurantId: session.restaurantId,
+    branchId: null,
+    role: session.role,
+    permissions: {},
+  }
+  const branches: StaffBranch[] = FIXTURES.branches.map((b) => ({
+    id: b.id,
+    name: b.name,
+    code: b.code,
+    timezone: b.timezone,
+    isActive: b.is_active,
+    isAcceptingOrders: b.is_accepting_orders,
+    lateOrderThresholdMinutes: b.late_order_threshold_minutes,
+    defaultPrepMinutes: b.default_prep_minutes,
+    serviceFeeBps: b.service_fee_bps,
+  }))
+  const branchIds = branches.map((b) => b.id)
+  const restaurant: StaffRestaurant = {
+    id: FIXTURES.restaurant.id,
+    name: FIXTURES.restaurant.name,
+    slug: FIXTURES.restaurant.slug,
+    logoUrl: FIXTURES.restaurant.logo_url,
+    currency: FIXTURES.restaurant.currency,
+    currencyDecimals: FIXTURES.restaurant.currency_decimals,
+    defaultLocale: FIXTURES.restaurant.default_locale,
+    serviceFeeBps: FIXTURES.restaurant.service_fee_bps,
+    serviceFeeEnabled: FIXTURES.restaurant.service_fee_enabled,
+    isActive: FIXTURES.restaurant.is_active,
+    isDemo: true,
+  }
+
+  return {
+    session,
+    membership,
+    memberships: [membership],
+    restaurant,
+    branches,
+    branchIds,
+    activeBranchId: branchIds[0] ?? null,
+    role: session.role,
+    isPlatformAdmin: true,
   }
 }
 
