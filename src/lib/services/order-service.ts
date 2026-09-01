@@ -30,7 +30,7 @@ import { AppErrorException, appError, toResult, type Result } from '@/lib/result
 import { PublicOrderSchema } from '@/lib/rpc/schemas'
 import { mapPgError } from '@/lib/security/errors'
 import { createServerClient } from '@/lib/supabase/server'
-import { getStaffSession } from '@/lib/services/session'
+import { getStaffContext } from '@/lib/auth/session'
 import type { StatusUpdateInput } from '@/lib/validation/order'
 import type {
   OrderItemOptionRow,
@@ -49,13 +49,16 @@ type ServerClient = Awaited<ReturnType<typeof createServerClient>>
 /* ------------------------------------------------------------------ */
 
 async function requireSession(): Promise<StaffSession> {
-  const session = await getStaffSession()
-  if (!session) {
+  // StaffContext.session is exactly the StaffSession shape this file's
+  // guards operate on (@/lib/auth/session), so the rest of the file needs
+  // no other change.
+  const context = await getStaffContext()
+  if (!context) {
     throw new AppErrorException(
       appError('FORBIDDEN', 'no staff session', { wire: 'QR050_FORBIDDEN' }),
     )
   }
-  return session
+  return context.session
 }
 
 /**

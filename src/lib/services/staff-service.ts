@@ -17,7 +17,7 @@ import { appUrl } from '@/lib/env'
 import { mapPgError } from '@/lib/security/errors'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createServerClient } from '@/lib/supabase/server'
-import { getStaffSession } from '@/lib/services/session'
+import { getStaffContext } from '@/lib/auth/session'
 import type { StaffInput } from '@/lib/validation/tenancy'
 import type { ProfileRow, StaffRole, StaffRow } from '@/types/database'
 import type { StaffSession } from '@/types/domain'
@@ -51,13 +51,16 @@ export interface StaffAdminView {
 const STAFF_MANAGER_ROLES: readonly StaffRole[] = ['RESTAURANT_OWNER', 'MANAGER']
 
 async function requireSession(): Promise<StaffSession> {
-  const session = await getStaffSession()
-  if (!session) {
+  // StaffContext.session is exactly the StaffSession shape this file's
+  // guards operate on (@/lib/auth/session), so the rest of the file needs
+  // no other change.
+  const context = await getStaffContext()
+  if (!context) {
     throw new AppErrorException(
       appError('FORBIDDEN', 'no staff session', { wire: 'QR050_FORBIDDEN' }),
     )
   }
-  return session
+  return context.session
 }
 
 function assertCanManageStaff(session: StaffSession): void {
@@ -300,7 +303,7 @@ export async function updateStaff(
 /**
  * Deactivate rather than delete: `orders.confirmed_by_staff_id` and the status
  * history point at this row, and an audit trail that loses its actor stops
- * being an audit trail. `getStaffSession()` reads `is_active` live, so the
+ * being an audit trail. `getStaffContext()` reads `is_active` live, so the
  * effect is immediate on the deactivated person's next query (doc 02 §8.1).
  */
 export async function deactivateStaff(id: string): Promise<Result<null>> {

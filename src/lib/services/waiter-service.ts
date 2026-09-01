@@ -19,7 +19,7 @@ import { OPEN_CALL_STATUSES } from '@/lib/realtime/channels'
 import { AppErrorException, appError, toResult, type Result } from '@/lib/result'
 import { mapPgError } from '@/lib/security/errors'
 import { createServerClient } from '@/lib/supabase/server'
-import { getStaffSession } from '@/lib/services/session'
+import { getStaffContext } from '@/lib/auth/session'
 import type { WaiterCallUpdateInput } from '@/lib/validation/waiter'
 import type { StaffRole, WaiterCallRow, WaiterCallStatus } from '@/types/database'
 import type { StaffSession, WaiterCallView } from '@/types/domain'
@@ -29,13 +29,16 @@ type ServerClient = Awaited<ReturnType<typeof createServerClient>>
 const WAITER_ROLES: readonly StaffRole[] = ['RESTAURANT_OWNER', 'MANAGER', 'WAITER']
 
 async function requireSession(): Promise<StaffSession> {
-  const session = await getStaffSession()
-  if (!session) {
+  // StaffContext.session is exactly the StaffSession shape this file's
+  // guards operate on (@/lib/auth/session), so the rest of the file needs
+  // no other change.
+  const context = await getStaffContext()
+  if (!context) {
     throw new AppErrorException(
       appError('FORBIDDEN', 'no staff session', { wire: 'QR050_FORBIDDEN' }),
     )
   }
-  return session
+  return context.session
 }
 
 function assertWaiterCapability(session: StaffSession): void {
