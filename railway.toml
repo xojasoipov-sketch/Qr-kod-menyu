@@ -1,0 +1,13 @@
+# Railway deploy configuration for the Next.js app.
+# Railway's Railpack builder auto-detects Next.js: `npm run build`, then the
+# start command below. `next start` reads the PORT Railway injects, so no
+# port needs to be hard-coded here.
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
