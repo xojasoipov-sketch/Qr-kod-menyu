@@ -1,14 +1,17 @@
 'use client';
 
-import { useState } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect, useCallback } from 'react';
 import { MenuCategory } from '@/types/database';
+import { getCategories } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { FolderTree, Plus, X } from 'lucide-react';
 import Image from 'next/image';
 
 export default function AdminCategoriesPage() {
   const [restaurantId] = useState('rest-001');
-  const [categories, setCategories] = useState<MenuCategory[]>(() => db.getCategories(restaurantId));
+  const [categories, setCategories] = useState<MenuCategory[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   const [name, setName] = useState('');
@@ -16,9 +19,42 @@ export default function AdminCategoriesPage() {
   const [icon, setIcon] = useState('UtensilsCrossed');
   const [imageUrl, setImageUrl] = useState('');
 
-  const refreshCategories = () => {
-    setCategories([...db.getCategories(restaurantId)]);
-  };
+  // Server is the source of truth: categories are pulled from the API, never from a client store copy.
+  const refreshCategories = useCallback(async () => {
+    try {
+      setCategories(await getCategories(restaurantId));
+    } catch (err: unknown) {
+      console.error("Kategoriyalarni yuklab bo'lmadi:", err);
+    }
+  }, [restaurantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCategories(restaurantId)
+      .then((next) => {
+        if (!cancelled) setCategories(next);
+      })
+      .catch((err: unknown) => {
+        console.error("Kategoriyalarni yuklab bo'lmadi:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  const handleRealtime = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'MENU_UPDATED') {
+        void refreshCategories();
+      }
+    },
+    [refreshCategories]
+  );
+
+  useRealtime({ restaurantId }, handleRealtime);
 
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +78,7 @@ export default function AdminCategoriesPage() {
       });
 
       if (res.ok) {
-        refreshCategories();
+        await refreshCategories();
         setIsAddModalOpen(false);
         setName('');
         setSlug('');
@@ -80,6 +116,9 @@ export default function AdminCategoriesPage() {
 
       {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {isLoading && categories.length === 0 && (
+          <p className="text-xs text-stone-400">Yuklanmoqda...</p>
+        )}
         {categories.map((cat, idx) => (
           <div
             key={cat.id}

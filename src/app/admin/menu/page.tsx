@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { db } from '@/lib/db/store';
-import { MenuItem, MenuCategory } from '@/types/database';
+import { useState, useEffect, useCallback } from 'react';
+import { MenuItem, MenuCategory, Restaurant } from '@/types/database';
+import { getMenuItems, getCategories, getRestaurant } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { formatCurrency } from '@/lib/utils';
 import { 
   Plus, 
@@ -19,16 +21,17 @@ import Image from 'next/image';
 
 export default function AdminMenuPage() {
   const [restaurantId] = useState('rest-001');
-  const [items, setItems] = useState<MenuItem[]>(() => db.getMenuItems(restaurantId));
-  const [categories] = useState<MenuCategory[]>(() => db.getCategories(restaurantId));
-  const [restaurant] = useState(() => db.getRestaurant(restaurantId));
+  const [items, setItems] = useState<MenuItem[]>([]);
+  const [categories, setCategories] = useState<MenuCategory[]>([]);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // Form State
   const [name, setName] = useState('');
-  const [categoryId, setCategoryId] = useState(categories[0]?.id || '');
+  const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [imageUrl, setImageUrl] = useState('');
@@ -36,9 +39,61 @@ export default function AdminMenuPage() {
   const [spicyLevel, setSpicyLevel] = useState('0');
   const [ingredientsText, setIngredientsText] = useState('');
 
-  const refreshItems = () => {
-    setItems([...db.getMenuItems(restaurantId)]);
-  };
+  // Server is the source of truth: menu data is pulled from the API, never from a client store copy.
+  const refreshItems = useCallback(async () => {
+    try {
+      setItems(await getMenuItems(restaurantId));
+    } catch (err: unknown) {
+      console.error("Taomlarni yuklab bo'lmadi:", err);
+    }
+  }, [restaurantId]);
+
+  const refreshCategories = useCallback(async () => {
+    try {
+      const nextCategories = await getCategories(restaurantId);
+      setCategories(nextCategories);
+      setCategoryId((prev) => prev || nextCategories[0]?.id || '');
+    } catch (err: unknown) {
+      console.error("Kategoriyalarni yuklab bo'lmadi:", err);
+    }
+  }, [restaurantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      getMenuItems(restaurantId),
+      getCategories(restaurantId),
+      getRestaurant(restaurantId),
+    ])
+      .then(([nextItems, nextCategories, nextRestaurant]) => {
+        if (cancelled) return;
+        setItems(nextItems);
+        setCategories(nextCategories);
+        setCategoryId((prev) => prev || nextCategories[0]?.id || '');
+        setRestaurant(nextRestaurant);
+      })
+      .catch((err: unknown) => {
+        console.error("Menyu ma'lumotlarini yuklab bo'lmadi:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  const handleRealtime = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'MENU_UPDATED') {
+        void refreshItems();
+        void refreshCategories();
+      }
+    },
+    [refreshItems, refreshCategories]
+  );
+
+  useRealtime({ restaurantId }, handleRealtime);
 
   const handleToggleAvailability = async (itemId: string) => {
     try {
@@ -46,7 +101,7 @@ export default function AdminMenuPage() {
         method: 'POST',
       });
       if (res.ok) {
-        refreshItems();
+        await refreshItems();
       }
     } catch {
       alert('Holatni o\'zgartirib bo\'lmadi');
@@ -81,7 +136,7 @@ export default function AdminMenuPage() {
       });
 
       if (res.ok) {
-        refreshItems();
+        await refreshItems();
         setIsAddModalOpen(false);
         setName('');
         setDescription('');
@@ -190,6 +245,13 @@ export default function AdminMenuPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-border/60">
+              {isLoading && filteredItems.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-stone-400">
+                    Yuklanmoqda...
+                  </td>
+                </tr>
+              )}
               {filteredItems.map((item) => {
                 const category = categories.find((c) => c.id === item.category_id);
                 return (

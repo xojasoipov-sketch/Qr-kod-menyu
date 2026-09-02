@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/store';
-import { Order, OrderStatus } from '@/types/database';
+import { useState, useEffect, useCallback } from 'react';
+import { Branch, Order, OrderStatus } from '@/types/database';
+import { getOrders, getBranches } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { soundManager } from '@/lib/sound/audio-alerts';
 import { formatRelativeTime, getElapsedMinutes } from '@/lib/utils';
 import { 
@@ -18,9 +20,13 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+const RESTAURANT_ID = 'rest-001';
+
 export default function KitchenDisplaySystemPage() {
   const [branchId, setBranchId] = useState('branch-001');
-  const [orders, setOrders] = useState<Order[]>(() => db.getOrdersByBranch(branchId));
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [completedItems, setCompletedItems] = useState<Record<string, boolean>>({});
   const [, setTimerTick] = useState(0);
@@ -32,31 +38,83 @@ export default function KitchenDisplaySystemPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const refreshOrders = () => {
-    setOrders([...db.getOrdersByBranch(branchId)]);
-  };
-
+  // Branch list is hydrated once from the server API.
   useEffect(() => {
-    const sse = new EventSource(`/api/realtime?branch_id=${branchId}`);
-
-    sse.onmessage = (e) => {
-      try {
-        const payload = JSON.parse(e.data);
-        if (payload.type === 'ORDER_CREATED') {
-          if (audioEnabled) {
-            soundManager.playKitchenOrderBell();
-          }
-          refreshOrders();
-        } else if (payload.type === 'ORDER_STATUS_CHANGED') {
-          refreshOrders();
-        }
-      } catch (err) {
-        console.error('SSE Oshxona xatosi:', err);
-      }
+    let cancelled = false;
+    getBranches(RESTAURANT_ID)
+      .then((list) => {
+        if (!cancelled) setBranches(list);
+      })
+      .catch((err: unknown) => {
+        console.error('Filiallarni yuklab bo\'lmadi:', err);
+      });
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    return () => sse.close();
-  }, [branchId, audioEnabled]);
+  // Server is the source of truth: every refresh pulls the branch's orders from the API.
+  const refreshOrders = useCallback(async () => {
+    try {
+      const list = await getOrders({ branchId });
+      setOrders(list);
+    } catch (err: unknown) {
+      console.error('Buyurtmalarni yuklab bo\'lmadi:', err);
+    }
+  }, [branchId]);
+
+  // Hydrate on mount and whenever the selected branch changes.
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    getOrders({ branchId })
+      .then((list) => {
+        if (cancelled) return;
+        setOrders(list);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.error('Buyurtmalarni yuklab bo\'lmadi:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId]);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'ORDER_CREATED') {
+        if (audioEnabled) {
+          soundManager.playKitchenOrderBell();
+        }
+        const created = payload.order;
+        if (created && created.branch_id === branchId) {
+          // Instant feedback: show the ticket immediately, then reconcile with the server.
+          setOrders((prev) =>
+            prev.some((o) => o.id === created.id) ? prev : [created, ...prev]
+          );
+        }
+        void refreshOrders();
+      } else if (payload.type === 'ORDER_STATUS_CHANGED') {
+        const changedId = payload.orderId ?? payload.order?.id;
+        const nextStatus = payload.newStatus ?? payload.order?.status;
+        if (changedId && nextStatus) {
+          setOrders((prev) =>
+            prev.map((o) =>
+              o.id === changedId ? (payload.order ?? { ...o, status: nextStatus }) : o
+            )
+          );
+        }
+        void refreshOrders();
+      }
+    },
+    [audioEnabled, branchId, refreshOrders]
+  );
+
+  useRealtime({ branchId }, handleRealtimeEvent);
 
   const handleUpdateStatus = async (orderId: string, nextStatus: OrderStatus) => {
     try {
@@ -74,7 +132,7 @@ export default function KitchenDisplaySystemPage() {
         const data = await res.json();
         alert(data.error || 'Holatni yangilab bo\'lmadi');
       } else {
-        refreshOrders();
+        await refreshOrders();
       }
     } catch {
       alert('Tarmoq xatosi');
@@ -88,8 +146,6 @@ export default function KitchenDisplaySystemPage() {
   const newOrders = orders.filter((o) => o.status === 'pending' || o.status === 'confirmed');
   const preparingOrders = orders.filter((o) => o.status === 'preparing');
   const readyOrders = orders.filter((o) => o.status === 'ready');
-
-  const branches = db.branches;
 
   return (
     <div className="min-h-screen bg-[#0A0908] text-stone-100 flex flex-col font-sans">
@@ -117,7 +173,6 @@ export default function KitchenDisplaySystemPage() {
             value={branchId}
             onChange={(e) => {
               setBranchId(e.target.value);
-              setOrders([...db.getOrdersByBranch(e.target.value)]);
             }}
             className="bg-transparent text-xs text-stone-200 focus:outline-none cursor-pointer"
           >
@@ -144,7 +199,7 @@ export default function KitchenDisplaySystemPage() {
           </button>
 
           <button
-            onClick={refreshOrders}
+            onClick={() => void refreshOrders()}
             className="p-2 rounded-xl bg-stone-800 text-stone-300 hover:text-white border border-stone-700"
             title="Yangilash"
           >
@@ -176,7 +231,7 @@ export default function KitchenDisplaySystemPage() {
           <div className="p-3 space-y-3 flex-1 overflow-y-auto">
             {newOrders.length === 0 ? (
               <div className="py-20 text-center text-stone-600 text-xs">
-                Yangi kelgan buyurtmalar yo&apos;q
+                {isLoading ? 'Yuklanmoqda...' : <>Yangi kelgan buyurtmalar yo&apos;q</>}
               </div>
             ) : (
               newOrders.map((order) => (
@@ -214,7 +269,7 @@ export default function KitchenDisplaySystemPage() {
           <div className="p-3 space-y-3 flex-1 overflow-y-auto">
             {preparingOrders.length === 0 ? (
               <div className="py-20 text-center text-stone-600 text-xs">
-                Hozir pishirilayotgan taomlar yo&apos;q
+                {isLoading ? 'Yuklanmoqda...' : <>Hozir pishirilayotgan taomlar yo&apos;q</>}
               </div>
             ) : (
               preparingOrders.map((order) => (
@@ -252,7 +307,7 @@ export default function KitchenDisplaySystemPage() {
           <div className="p-3 space-y-3 flex-1 overflow-y-auto">
             {readyOrders.length === 0 ? (
               <div className="py-20 text-center text-stone-600 text-xs">
-                Olib ketish kutilayotgan taomlar yo&apos;q
+                {isLoading ? 'Yuklanmoqda...' : <>Olib ketish kutilayotgan taomlar yo&apos;q</>}
               </div>
             ) : (
               readyOrders.map((order) => (

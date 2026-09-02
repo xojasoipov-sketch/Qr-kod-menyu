@@ -111,6 +111,30 @@ class RestaurantDataStore {
     return this.tables[idx];
   }
 
+  updateRestaurant(id: string, updates: Partial<Omit<Restaurant, 'id' | 'created_at'>>): Restaurant | null {
+    const idx = this.restaurants.findIndex((r) => r.id === id);
+    if (idx === -1) return null;
+    this.restaurants[idx] = {
+      ...this.restaurants[idx],
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    return this.restaurants[idx];
+  }
+
+  createStaff(data: Omit<Staff, 'id' | 'user_id' | 'is_active' | 'created_at' | 'updated_at'>): Staff {
+    const newStaff: Staff = {
+      id: `staff-${nanoid(8)}`,
+      user_id: `usr-${nanoid(8)}`,
+      ...data,
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.staff.push(newStaff);
+    return newStaff;
+  }
+
   regenerateQrToken(tableId: string): { table: Table; oldToken: string } | null {
     const table = this.tables.find((t) => t.id === tableId);
     if (!table) return null;

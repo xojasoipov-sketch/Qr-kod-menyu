@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Table, Restaurant } from '@/types/database';
+import { getTables, getRestaurant } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import QRCode from 'qrcode';
 import { 
   QrCode, 
@@ -32,9 +34,10 @@ const ZONES = [
 
 export default function AdminTablesPage() {
   const [branchId] = useState('branch-001');
-  const [allTables, setAllTables] = useState<Table[]>(() => db.getTablesByBranch(branchId));
+  const [allTables, setAllTables] = useState<Table[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedZone, setSelectedZone] = useState('Barchasi');
-  const [restaurant] = useState<Restaurant | undefined>(() => db.getRestaurant('rest-001'));
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [selectedTableForQr, setSelectedTableForQr] = useState<Table | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -58,14 +61,49 @@ export default function AdminTablesPage() {
   const rooms = allTables.filter(t => t.zone === 'Alohida Xonalar');
   const totalCapacity = allTables.reduce((s, t) => s + (t.capacity || 0), 0);
 
-  const refreshTables = () => {
-    const updated = db.getTablesByBranch(branchId);
-    setAllTables([...updated]);
-    if (selectedTableForQr) {
-      const refreshedSelected = updated.find((t) => t.id === selectedTableForQr.id);
-      if (refreshedSelected) setSelectedTableForQr(refreshedSelected);
+  // Server is the source of truth: tables are pulled from the API, never from a client store copy.
+  const refreshTables = useCallback(async () => {
+    try {
+      const updated = await getTables(branchId);
+      setAllTables(updated);
+      setSelectedTableForQr((prev) => {
+        if (!prev) return prev;
+        return updated.find((t) => t.id === prev.id) ?? prev;
+      });
+    } catch (err: unknown) {
+      console.error("Stollarni yuklab bo'lmadi:", err);
     }
-  };
+  }, [branchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getTables(branchId), getRestaurant('rest-001')])
+      .then(([nextTables, nextRestaurant]) => {
+        if (cancelled) return;
+        setAllTables(nextTables);
+        setRestaurant(nextRestaurant);
+      })
+      .catch((err: unknown) => {
+        console.error("Stollar ma'lumotlarini yuklab bo'lmadi:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId]);
+
+  const handleRealtime = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'TABLE_UPDATED') {
+        void refreshTables();
+      }
+    },
+    [refreshTables]
+  );
+
+  useRealtime({ branchId }, handleRealtime);
 
   useEffect(() => {
     if (!selectedTableForQr) return;
@@ -98,7 +136,7 @@ export default function AdminTablesPage() {
       if (!res.ok) {
         alert("QR kodni yangilab bo'lmadi");
       } else {
-        refreshTables();
+        await refreshTables();
       }
     } catch {
       alert('Tarmoq xatosi');
@@ -128,7 +166,7 @@ export default function AdminTablesPage() {
       });
 
       if (res.ok) {
-        refreshTables();
+        await refreshTables();
         setIsCreateModalOpen(false);
         setTableNumber('');
         setTableName('');
@@ -236,6 +274,9 @@ export default function AdminTablesPage() {
             </div>
 
             <div className="divide-y divide-surface-border/60 max-h-[600px] overflow-y-auto">
+              {isLoading && tables.length === 0 && (
+                <div className="p-4 text-xs text-stone-400">Yuklanmoqda...</div>
+              )}
               {tables.map((table) => {
                 const isSelected = selectedTableForQr?.id === table.id;
                 const isRoom = table.zone === 'Alohida Xonalar';

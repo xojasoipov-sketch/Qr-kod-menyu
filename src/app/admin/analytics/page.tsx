@@ -1,16 +1,67 @@
 'use client';
 
-import { useState } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect, useCallback } from 'react';
+import { Restaurant } from '@/types/database';
+import { getAnalytics, getRestaurant, type Analytics } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { formatCurrency } from '@/lib/utils';
 import { TrendingUp, DollarSign, UtensilsCrossed, Sparkles } from 'lucide-react';
 import Image from 'next/image';
 
+const EMPTY_ANALYTICS: Analytics = {
+  todayRevenue: 0,
+  todayOrders: 0,
+  averageOrderValue: 0,
+  pendingOrdersCount: 0,
+  activeTables: 0,
+  popularDishes: [],
+};
+
 export default function AdminAnalyticsPage() {
   const [restaurantId] = useState('rest-001');
-  const [analytics] = useState(() => db.getAnalytics(restaurantId));
-  const [restaurant] = useState(() => db.getRestaurant(restaurantId));
+  const [analytics, setAnalytics] = useState<Analytics>(EMPTY_ANALYTICS);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const currencySymbol = restaurant?.currency_symbol || "so'm";
+
+  // Server is the source of truth: analytics are computed on the server and pulled from the API.
+  const refreshAnalytics = useCallback(async () => {
+    try {
+      const next = await getAnalytics(restaurantId);
+      setAnalytics(next);
+    } catch (err: unknown) {
+      console.error('Tahlil ma\'lumotlarini yuklab bo\'lmadi:', err);
+    }
+  }, [restaurantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getRestaurant(restaurantId)
+      .then((r) => {
+        if (!cancelled) setRestaurant(r);
+      })
+      .catch((err: unknown) => {
+        console.error('Restoran ma\'lumotlarini yuklab bo\'lmadi:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  useEffect(() => {
+    void refreshAnalytics();
+  }, [refreshAnalytics]);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'ORDER_STATUS_CHANGED' || payload.type === 'ORDER_CREATED') {
+        void refreshAnalytics();
+      }
+    },
+    [refreshAnalytics]
+  );
+
+  useRealtime({ restaurantId }, handleRealtimeEvent);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">

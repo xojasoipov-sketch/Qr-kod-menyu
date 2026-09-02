@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/store';
-import { Order, OrderStatus } from '@/types/database';
+import { useState, useEffect, useCallback } from 'react';
+import { Order, OrderStatusHistory, Restaurant } from '@/types/database';
+import { getOrders, getRestaurant } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { formatCurrency, formatRelativeTime } from '@/lib/utils';
 import { STATUS_DISPLAY_INFO } from '@/lib/order-state-machine';
 import { 
@@ -15,28 +17,102 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+// The status-history log lives only on the server store; it is fetched per selected order.
+async function getOrderHistory(orderId: string): Promise<OrderStatusHistory[]> {
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/history`, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Request failed with status ${res.status}`);
+  }
+  const data = (await res.json()) as { history: OrderStatusHistory[] };
+  return data.history;
+}
+
 export default function AdminOrdersPage() {
   const [restaurantId] = useState('rest-001');
-  const [orders, setOrders] = useState<Order[]>(() => db.getOrdersByRestaurant(restaurantId));
+  const [orders, setOrders] = useState<Order[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [restaurant] = useState(() => db.getRestaurant(restaurantId));
+  const [selectedHistory, setSelectedHistory] = useState<OrderStatusHistory[]>([]);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
 
-  const refreshOrders = () => {
-    const updated = db.getOrdersByRestaurant(restaurantId);
-    setOrders([...updated]);
-    if (selectedOrder) {
-      const refreshedSelected = updated.find((o) => o.id === selectedOrder.id);
-      if (refreshedSelected) setSelectedOrder(refreshedSelected);
+  const selectedOrderId = selectedOrder?.id ?? null;
+
+  // Server is the source of truth: every refresh pulls the restaurant's orders from the API.
+  const refreshOrders = useCallback(async () => {
+    try {
+      const updated = await getOrders({ restaurantId });
+      setOrders(updated);
+      setSelectedOrder((current) => {
+        if (!current) return current;
+        const refreshedSelected = updated.find((o) => o.id === current.id);
+        return refreshedSelected ?? current;
+      });
+    } catch (err: unknown) {
+      console.error('Buyurtmalarni yuklab bo\'lmadi:', err);
     }
-  };
+  }, [restaurantId]);
+
+  const refreshHistory = useCallback(async (orderId: string) => {
+    try {
+      const history = await getOrderHistory(orderId);
+      setSelectedHistory(history);
+    } catch (err: unknown) {
+      console.error('Buyurtma tarixini yuklab bo\'lmadi:', err);
+    }
+  }, []);
 
   useEffect(() => {
-    const sse = new EventSource(`/api/realtime?restaurant_id=${restaurantId}`);
-    sse.onmessage = () => refreshOrders();
-    return () => sse.close();
+    let cancelled = false;
+    getRestaurant(restaurantId)
+      .then((r) => {
+        if (!cancelled) setRestaurant(r);
+      })
+      .catch((err: unknown) => {
+        console.error('Restoran ma\'lumotlarini yuklab bo\'lmadi:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [restaurantId]);
+
+  useEffect(() => {
+    void refreshOrders();
+  }, [refreshOrders]);
+
+  // Load the status log whenever a different order is opened in the modal.
+  useEffect(() => {
+    setSelectedHistory([]);
+    if (!selectedOrderId) return;
+    let cancelled = false;
+    getOrderHistory(selectedOrderId)
+      .then((history) => {
+        if (!cancelled) setSelectedHistory(history);
+      })
+      .catch((err: unknown) => {
+        console.error('Buyurtma tarixini yuklab bo\'lmadi:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrderId]);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type !== 'ORDER_CREATED' && payload.type !== 'ORDER_STATUS_CHANGED') return;
+      void refreshOrders();
+      if (
+        payload.type === 'ORDER_STATUS_CHANGED' &&
+        selectedOrderId &&
+        (payload.orderId === selectedOrderId || payload.order?.id === selectedOrderId)
+      ) {
+        void refreshHistory(selectedOrderId);
+      }
+    },
+    [refreshOrders, refreshHistory, selectedOrderId]
+  );
+
+  useRealtime({ restaurantId }, handleRealtimeEvent);
 
   const filteredOrders = orders.filter((o) => {
     if (statusFilter !== 'all' && o.status !== statusFilter) return false;
@@ -278,13 +354,12 @@ export default function AdminOrdersPage() {
               </h3>
 
               <div className="bg-surface-50 rounded-xl p-3 border border-surface-border space-y-2 text-xs">
-                {db.statusHistory.filter((h) => h.order_id === selectedOrder.id).length === 0 ? (
+                {selectedHistory.length === 0 ? (
                   <div className="text-stone-500 text-[11px]">
                     Mijoz tomonidan QR menyudan berildi
                   </div>
                 ) : (
-                  db.statusHistory
-                    .filter((h) => h.order_id === selectedOrder.id)
+                  selectedHistory
                     .map((history) => (
                       <div key={history.id} className="flex items-center justify-between text-[11px] text-stone-300 pb-1.5 border-b border-surface-border/40 last:border-0 last:pb-0">
                         <div className="flex items-center gap-2">

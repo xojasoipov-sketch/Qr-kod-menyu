@@ -1,35 +1,73 @@
 'use client';
 
-import { useState } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect } from 'react';
 import { Restaurant, Branch } from '@/types/database';
+import { getRestaurant, getBranches, updateRestaurant } from '@/lib/api';
 import { Store, MapPin, DollarSign, Save, Check } from 'lucide-react';
 
 export default function AdminSettingsPage() {
-  const [restaurant, setRestaurant] = useState<Restaurant | undefined>(() => db.getRestaurant('rest-001'));
-  const [branches] = useState<Branch[]>(() => db.getBranchesByRestaurant('rest-001'));
+  const [restaurantId] = useState('rest-001');
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [name, setName] = useState(restaurant?.name || '');
-  const [tagline, setTagline] = useState(restaurant?.tagline || '');
-  const [serviceFee, setServiceFee] = useState(restaurant?.service_fee_percentage.toString() || '10');
-  const [phone, setPhone] = useState(restaurant?.phone || '');
-  const [currencySymbol, setCurrencySymbol] = useState(restaurant?.currency_symbol || "so'm");
+  const [name, setName] = useState('');
+  const [tagline, setTagline] = useState('');
+  const [serviceFee, setServiceFee] = useState('10');
+  const [phone, setPhone] = useState('');
+  const [currencySymbol, setCurrencySymbol] = useState("so'm");
 
-  const handleSave = (e: React.FormEvent) => {
+  // Server is the source of truth: the restaurant profile and branches are pulled from the API.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getRestaurant(restaurantId), getBranches(restaurantId)])
+      .then(([nextRestaurant, nextBranches]) => {
+        if (cancelled) return;
+        setRestaurant(nextRestaurant);
+        setBranches(nextBranches);
+        setName(nextRestaurant.name);
+        setTagline(nextRestaurant.tagline || '');
+        setServiceFee(nextRestaurant.service_fee_percentage.toString());
+        setPhone(nextRestaurant.phone);
+        setCurrencySymbol(nextRestaurant.currency_symbol || "so'm");
+      })
+      .catch((err: unknown) => {
+        console.error("Sozlamalarni yuklab bo'lmadi:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant) return;
 
-    restaurant.name = name;
-    restaurant.tagline = tagline;
-    restaurant.service_fee_percentage = parseFloat(serviceFee) || 0;
-    restaurant.phone = phone;
-    restaurant.currency_symbol = currencySymbol;
-    restaurant.updated_at = new Date().toISOString();
-
-    setRestaurant({ ...restaurant });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      // Persisted server-side: the change is visible to every device on the next fetch.
+      const updated = await updateRestaurant(restaurant.id, {
+        name,
+        tagline,
+        service_fee_percentage: parseFloat(serviceFee) || 0,
+        phone,
+        currency_symbol: currencySymbol,
+      });
+      setRestaurant(updated);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : "Sozlamalarni saqlab bo'lmadi");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -50,6 +88,12 @@ export default function AdminSettingsPage() {
         <div className="p-3.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2 animate-fade-in">
           <Check className="w-4 h-4 text-emerald-400" />
           <span>Sozlamalar muvaffaqiyatli saqlandi va barcha qurilmalarga yangilandi.</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="p-3.5 rounded-xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs flex items-center gap-2 animate-fade-in">
+          <span>{saveError}</span>
         </div>
       )}
 
@@ -138,6 +182,9 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="space-y-3">
+            {isLoading && branches.length === 0 && (
+              <p className="text-xs text-stone-400">Yuklanmoqda...</p>
+            )}
             {branches.map((b) => (
               <div key={b.id} className="p-3.5 rounded-xl bg-surface-50 border border-surface-border/60 flex items-center justify-between">
                 <div>
@@ -155,10 +202,11 @@ export default function AdminSettingsPage() {
         <div className="flex justify-end">
           <button
             type="submit"
-            className="px-6 py-3 rounded-xl bg-gradient-to-r from-gold-400 to-amber-500 text-stone-950 font-bold text-xs tracking-wider uppercase shadow-gold-glow hover:brightness-110 active:scale-98 transition-all flex items-center gap-2"
+            disabled={isSaving}
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-gold-400 to-amber-500 text-stone-950 font-bold text-xs tracking-wider uppercase shadow-gold-glow hover:brightness-110 active:scale-98 transition-all flex items-center gap-2 disabled:opacity-60 disabled:pointer-events-none"
           >
             <Save className="w-4 h-4" />
-            <span>O&apos;zgarishlarni Saqlash</span>
+            <span>{isSaving ? 'Saqlanmoqda...' : "O'zgarishlarni Saqlash"}</span>
           </button>
         </div>
       </form>

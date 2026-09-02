@@ -1,9 +1,11 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { db } from '@/lib/db/store';
-import { Order, OrderStatus } from '@/types/database';
+import { getOrder, resolveTable } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
+import { Order, OrderStatus, TableResolution } from '@/types/database';
 import { STATUS_DISPLAY_INFO } from '@/lib/order-state-machine';
 import { soundManager } from '@/lib/sound/audio-alerts';
 import { formatCurrency, formatRelativeTime } from '@/lib/utils';
@@ -27,35 +29,62 @@ export default function CustomerOrderTrackingPage({
 }) {
   const { token, orderId } = use(params);
 
-  const [order, setOrder] = useState<Order | null>(() => db.getOrder(orderId) || null);
-  const [resolution] = useState(() => db.getTableByQrToken(token));
+  const [order, setOrder] = useState<Order | null>(null);
+  const [resolution, setResolution] = useState<TableResolution | null>(null);
+  const [loading, setLoading] = useState(true);
   const [callingWaiter, setCallingWaiter] = useState(false);
   const [callCooldown, setCallCooldown] = useState(0);
   const [callSuccess, setCallSuccess] = useState(false);
 
-  useEffect(() => {
-    const sse = new EventSource(`/api/realtime?order_id=${orderId}`);
+  const refetchOrder = useCallback(() => {
+    getOrder(orderId)
+      .then(setOrder)
+      .catch((err: unknown) => {
+        console.error('Failed to fetch order', err);
+      });
+  }, [orderId]);
 
-    sse.onmessage = (e) => {
-      try {
-        const payload = JSON.parse(e.data);
-        if (payload.type === 'ORDER_STATUS_CHANGED' && payload.orderId === orderId) {
-          if (payload.order) {
-            setOrder(payload.order);
-            if (payload.newStatus === 'ready') {
-              soundManager.playOrderReadyChime();
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE payload', err);
-      }
-    };
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    Promise.all([
+      getOrder(orderId).catch((err: unknown) => {
+        console.error('Failed to fetch order', err);
+        return null;
+      }),
+      resolveTable(token).catch((err: unknown) => {
+        console.error('Failed to resolve QR token', err);
+        return null;
+      }),
+    ]).then(([orderData, resolutionData]) => {
+      if (cancelled) return;
+      setOrder(orderData);
+      setResolution(resolutionData);
+      setLoading(false);
+    });
 
     return () => {
-      sse.close();
+      cancelled = true;
     };
-  }, [orderId]);
+  }, [orderId, token]);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'ORDER_STATUS_CHANGED' && payload.orderId === orderId) {
+        if (payload.order) {
+          setOrder(payload.order);
+        }
+        if (payload.newStatus === 'ready') {
+          soundManager.playOrderReadyChime();
+        }
+        refetchOrder();
+      }
+    },
+    [orderId, refetchOrder]
+  );
+
+  useRealtime({ orderId }, handleRealtimeEvent);
 
   const handleCallWaiter = async () => {
     if (callCooldown > 0 || callingWaiter || !resolution) return;
@@ -96,6 +125,20 @@ export default function CustomerOrderTrackingPage({
       setCallingWaiter(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0C0A09] text-[#FAF5EE] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full p-8 rounded-3xl bg-surface-100 border border-surface-border animate-pulse">
+          <Clock className="w-12 h-12 text-gold-400 mx-auto mb-3" />
+          <h1 className="font-serif text-xl font-bold text-white mb-2">Buyurtma yuklanmoqda...</h1>
+          <p className="text-stone-400 text-xs">
+            <code className="text-gold-300">{orderId}</code>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!order || !resolution) {
     return (

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect } from 'react';
 import { Staff, UserRole } from '@/types/database';
+import { getStaff, createStaff } from '@/lib/api';
 import { Users, Shield, Plus, Mail, X } from 'lucide-react';
 
 const ROLE_BADGES: Record<UserRole, { label: string; bg: string; color: string; desc: string }> = {
@@ -15,35 +15,58 @@ const ROLE_BADGES: Record<UserRole, { label: string; bg: string; color: string; 
 
 export default function AdminStaffPage() {
   const [restaurantId] = useState('rest-001');
-  const [staff, setStaff] = useState<Staff[]>(() => db.staff);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+
+  // Server is the source of truth: the staff list is pulled from the API, never from a client store copy.
+  useEffect(() => {
+    let cancelled = false;
+    getStaff(restaurantId)
+      .then((next) => {
+        if (!cancelled) setStaff(next);
+      })
+      .catch((err: unknown) => {
+        console.error("Xodimlarni yuklab bo'lmadi:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('WAITER');
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
-  const handleInvite = (e: React.FormEvent) => {
+  const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !email) return;
 
-    const newStaff: Staff = {
-      id: `staff-${Date.now()}`,
-      restaurant_id: restaurantId,
-      branch_id: 'branch-001',
-      user_id: `usr-${Date.now()}`,
-      name,
-      email,
-      role,
-      is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    db.staff.push(newStaff);
-    setStaff([...db.staff]);
-    setIsInviteModalOpen(false);
-    setName('');
-    setEmail('');
+    setIsInviting(true);
+    setInviteError(null);
+    try {
+      // Persisted server-side: the new staff member is visible on reload and in other tabs.
+      const newStaff = await createStaff({
+        restaurant_id: restaurantId,
+        branch_id: 'branch-001',
+        name,
+        email,
+        role,
+      });
+      setStaff((prev) => [...prev, newStaff]);
+      setIsInviteModalOpen(false);
+      setName('');
+      setEmail('');
+    } catch (err: unknown) {
+      setInviteError(err instanceof Error ? err.message : "Xodimni biriktirib bo'lmadi");
+    } finally {
+      setIsInviting(false);
+    }
   };
 
   return (
@@ -113,6 +136,9 @@ export default function AdminStaffPage() {
         </div>
 
         <div className="divide-y divide-surface-border/60">
+          {isLoading && staff.length === 0 && (
+            <div className="p-4 text-xs text-stone-400">Yuklanmoqda...</div>
+          )}
           {staff.map((member) => {
             const roleInfo = ROLE_BADGES[member.role] || ROLE_BADGES.WAITER;
 
@@ -200,6 +226,10 @@ export default function AdminStaffPage() {
                 </select>
               </div>
 
+              {inviteError && (
+                <p className="text-red-400 text-xs">{inviteError}</p>
+              )}
+
               <div className="pt-4 border-t border-surface-border flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -210,9 +240,10 @@ export default function AdminStaffPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-gold-400 text-stone-950 font-bold hover:bg-gold-300"
+                  disabled={isInviting}
+                  className="px-5 py-2 rounded-xl bg-gold-400 text-stone-950 font-bold hover:bg-gold-300 disabled:opacity-60 disabled:pointer-events-none"
                 >
-                  Biriktirish
+                  {isInviting ? 'Biriktirilmoqda...' : 'Biriktirish'}
                 </button>
               </div>
             </form>

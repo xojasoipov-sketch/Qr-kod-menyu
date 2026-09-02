@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/store';
-import { WaiterCall, Order, Table } from '@/types/database';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { getOrders, getWaiterCalls, getTables, getBranches } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
+import { WaiterCall, Order, Table, Branch } from '@/types/database';
 import { soundManager } from '@/lib/sound/audio-alerts';
 import { formatRelativeTime } from '@/lib/utils';
 import { 
@@ -20,47 +22,105 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+const RESTAURANT_ID = 'rest-001';
+
 export default function WaiterPanelPage() {
   const [branchId, setBranchId] = useState('branch-001');
-  const [waiterCalls, setWaiterCalls] = useState<WaiterCall[]>(() => db.getWaiterCalls(branchId));
-  const [orders, setOrders] = useState<Order[]>(() => db.getOrdersByBranch(branchId));
-  const [tables, setTables] = useState<Table[]>(() => db.getTablesByBranch(branchId));
+  const [waiterCalls, setWaiterCalls] = useState<WaiterCall[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [tables, setTables] = useState<Table[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(true);
 
-  const refreshAll = () => {
-    setWaiterCalls([...db.getWaiterCalls(branchId)]);
-    setOrders([...db.getOrdersByBranch(branchId)]);
-    setTables([...db.getTablesByBranch(branchId)]);
-  };
+  // Tracks the branch currently selected so responses for a stale branch are dropped.
+  const branchRef = useRef(branchId);
+  useEffect(() => {
+    branchRef.current = branchId;
+  }, [branchId]);
+
+  const refreshAll = useCallback(() => {
+    const target = branchId;
+    Promise.all([getWaiterCalls(target), getOrders({ branchId: target }), getTables(target)])
+      .then(([calls, branchOrders, branchTables]) => {
+        if (branchRef.current !== target) return;
+        setWaiterCalls(calls);
+        setOrders(branchOrders);
+        setTables(branchTables);
+      })
+      .catch((err: unknown) => {
+        console.error('Ofitsiant ma\'lumotlarini yuklashda xato:', err);
+      });
+  }, [branchId]);
+
+  // Hydrate from the API on mount and whenever the branch changes.
+  useEffect(() => {
+    setWaiterCalls([]);
+    setOrders([]);
+    setTables([]);
+    refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
-    const sse = new EventSource(`/api/realtime?branch_id=${branchId}`);
-
-    sse.onmessage = (e) => {
-      try {
-        const payload = JSON.parse(e.data);
-        if (payload.type === 'WAITER_CALLED') {
-          if (audioEnabled) {
-            soundManager.playWaiterCallAlert();
-          }
-          refreshAll();
-        } else if (payload.type === 'WAITER_CALL_ACKNOWLEDGED') {
-          refreshAll();
-        } else if (payload.type === 'ORDER_STATUS_CHANGED') {
-          if (payload.newStatus === 'ready' && audioEnabled) {
-            soundManager.playOrderReadyChime();
-          }
-          refreshAll();
-        } else if (payload.type === 'ORDER_CREATED') {
-          refreshAll();
-        }
-      } catch (err) {
-        console.error('SSE Ofitsiant xatosi:', err);
-      }
+    let cancelled = false;
+    getBranches(RESTAURANT_ID)
+      .then((list) => {
+        if (!cancelled) setBranches(list);
+      })
+      .catch((err: unknown) => {
+        console.error('Filiallarni yuklashda xato:', err);
+      });
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    return () => sse.close();
-  }, [branchId, audioEnabled]);
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.branch_id && payload.branch_id !== branchRef.current) return;
+
+      if (payload.type === 'WAITER_CALLED') {
+        if (audioEnabled) {
+          soundManager.playWaiterCallAlert();
+        }
+        const call = payload.waiterCall;
+        if (call) {
+          setWaiterCalls((prev) =>
+            prev.some((c) => c.id === call.id) ? prev.map((c) => (c.id === call.id ? call : c)) : [...prev, call]
+          );
+        }
+        refreshAll();
+      } else if (payload.type === 'WAITER_CALL_ACKNOWLEDGED') {
+        const call = payload.waiterCall;
+        if (call) {
+          setWaiterCalls((prev) => prev.map((c) => (c.id === call.id ? call : c)));
+        }
+        refreshAll();
+      } else if (payload.type === 'ORDER_STATUS_CHANGED') {
+        if (payload.newStatus === 'ready' && audioEnabled) {
+          soundManager.playOrderReadyChime();
+        }
+        const order = payload.order;
+        if (order) {
+          setOrders((prev) => prev.map((o) => (o.id === order.id ? order : o)));
+        } else if (payload.orderId && payload.newStatus) {
+          const { orderId, newStatus } = payload;
+          setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+        }
+        refreshAll();
+      } else if (payload.type === 'ORDER_CREATED') {
+        const order = payload.order;
+        if (order) {
+          setOrders((prev) => (prev.some((o) => o.id === order.id) ? prev : [...prev, order]));
+        }
+        refreshAll();
+      } else if (payload.type === 'TABLE_UPDATED') {
+        refreshAll();
+      }
+    },
+    [audioEnabled, refreshAll]
+  );
+
+  useRealtime({ branchId }, handleRealtimeEvent);
 
   const handleAcknowledgeCall = async (callId: string) => {
     try {
@@ -73,6 +133,7 @@ export default function WaiterPanelPage() {
       if (!res.ok) {
         alert('Xatolik yuz berdi');
       } else {
+        setWaiterCalls((prev) => prev.filter((c) => c.id !== callId));
         refreshAll();
       }
     } catch {
@@ -95,6 +156,7 @@ export default function WaiterPanelPage() {
       if (!res.ok) {
         alert('Xatolik yuz berdi');
       } else {
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'delivered' } : o)));
         refreshAll();
       }
     } catch {
@@ -104,8 +166,6 @@ export default function WaiterPanelPage() {
 
   const pendingCalls = waiterCalls.filter((c) => c.status === 'PENDING');
   const readyOrders = orders.filter((o) => o.status === 'ready');
-
-  const branches = db.branches;
 
   return (
     <div className="min-h-screen bg-[#0C0A09] text-stone-100 font-sans pb-16">
@@ -133,9 +193,6 @@ export default function WaiterPanelPage() {
             value={branchId}
             onChange={(e) => {
               setBranchId(e.target.value);
-              setWaiterCalls([...db.getWaiterCalls(e.target.value)]);
-              setOrders([...db.getOrdersByBranch(e.target.value)]);
-              setTables([...db.getTablesByBranch(e.target.value)]);
             }}
             className="bg-transparent text-xs text-stone-200 focus:outline-none cursor-pointer"
           >

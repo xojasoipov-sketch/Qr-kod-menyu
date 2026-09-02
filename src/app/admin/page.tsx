@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/store';
+import { useState, useEffect, useCallback } from 'react';
+import { Order, Restaurant } from '@/types/database';
+import { getAnalytics, getOrders, getRestaurant, type Analytics } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { formatCurrency, formatRelativeTime } from '@/lib/utils';
 import { 
   DollarSign, 
@@ -16,22 +19,66 @@ import {
 import Link from 'next/link';
 import Image from 'next/image';
 
+const EMPTY_ANALYTICS: Analytics = {
+  todayRevenue: 0,
+  todayOrders: 0,
+  averageOrderValue: 0,
+  pendingOrdersCount: 0,
+  activeTables: 0,
+  popularDishes: [],
+};
+
 export default function AdminDashboardPage() {
   const [restaurantId] = useState('rest-001');
-  const [analytics, setAnalytics] = useState(() => db.getAnalytics(restaurantId));
-  const [orders, setOrders] = useState(() => db.getOrdersByRestaurant(restaurantId));
-  const [restaurant] = useState(() => db.getRestaurant(restaurantId));
+  const [analytics, setAnalytics] = useState<Analytics>(EMPTY_ANALYTICS);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const refreshData = () => {
-    setAnalytics(db.getAnalytics(restaurantId));
-    setOrders([...db.getOrdersByRestaurant(restaurantId)]);
-  };
+  // Server is the source of truth: analytics and the live order feed are pulled from the API.
+  const refreshData = useCallback(async () => {
+    try {
+      const [nextAnalytics, nextOrders] = await Promise.all([
+        getAnalytics(restaurantId),
+        getOrders({ restaurantId }),
+      ]);
+      setAnalytics(nextAnalytics);
+      setOrders(nextOrders);
+    } catch (err: unknown) {
+      console.error('Boshqaruv paneli ma\'lumotlarini yuklab bo\'lmadi:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [restaurantId]);
 
   useEffect(() => {
-    const sse = new EventSource(`/api/realtime?restaurant_id=${restaurantId}`);
-    sse.onmessage = () => refreshData();
-    return () => sse.close();
+    let cancelled = false;
+    getRestaurant(restaurantId)
+      .then((r) => {
+        if (!cancelled) setRestaurant(r);
+      })
+      .catch((err: unknown) => {
+        console.error('Restoran ma\'lumotlarini yuklab bo\'lmadi:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [restaurantId]);
+
+  useEffect(() => {
+    void refreshData();
+  }, [refreshData]);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'ORDER_CREATED' || payload.type === 'ORDER_STATUS_CHANGED') {
+        void refreshData();
+      }
+    },
+    [refreshData]
+  );
+
+  useRealtime({ restaurantId }, handleRealtimeEvent);
 
   const currencySymbol = restaurant?.currency_symbol || "so'm";
 
@@ -215,7 +262,7 @@ export default function AdminDashboardPage() {
           <div className="space-y-3">
             {analytics.popularDishes.length === 0 ? (
               <p className="text-xs text-stone-500 text-center py-8">
-                Hozircha sotuvlar qayd etilmadi.
+                {isLoading ? 'Yuklanmoqda...' : 'Hozircha sotuvlar qayd etilmadi.'}
               </p>
             ) : (
               analytics.popularDishes.map((dish, i) => (

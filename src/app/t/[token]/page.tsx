@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useState, useMemo } from 'react';
-import { db } from '@/lib/db/store';
-import { CartItem, MenuItem, SelectedOption } from '@/types/database';
+import { use, useEffect, useState, useMemo } from 'react';
+import { resolveTable } from '@/lib/api';
+import { CartItem, MenuItem, SelectedOption, TableResolution } from '@/types/database';
 import CustomerHeader from '@/components/customer/CustomerHeader';
 import CategoryNav from '@/components/customer/CategoryNav';
 import FeaturedCarousel from '@/components/customer/FeaturedCarousel';
@@ -12,6 +12,8 @@ import CartDrawer from '@/components/customer/CartDrawer';
 import { AlertCircle, Utensils } from 'lucide-react';
 import Link from 'next/link';
 
+type ResolutionStatus = 'loading' | 'ready' | 'not-found';
+
 export default function CustomerMenuPage({
   params,
 }: {
@@ -19,14 +21,58 @@ export default function CustomerMenuPage({
 }) {
   const { token } = use(params);
 
-  const resolution = useMemo(() => {
-    return db.getTableByQrToken(token);
-  }, [token]);
+  const [resolution, setResolution] = useState<TableResolution | null>(null);
+  const [resolutionStatus, setResolutionStatus] = useState<ResolutionStatus>('loading');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState<string>('all');
   const [selectedItemForModal, setSelectedItemForModal] = useState<MenuItem | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResolutionStatus('loading');
+
+    resolveTable(token)
+      .then((data) => {
+        if (cancelled) return;
+        setResolution(data);
+        setResolutionStatus('ready');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.error('Failed to resolve QR token', err);
+        setResolution(null);
+        setResolutionStatus('not-found');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const items = useMemo(() => resolution?.items ?? [], [resolution]);
+
+  const categoryItemCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    items.forEach((item) => {
+      counts[item.category_id] = (counts[item.category_id] || 0) + 1;
+    });
+    return counts;
+  }, [items]);
+
+  if (resolutionStatus === 'loading') {
+    return (
+      <main className="min-h-screen bg-[#0C0A09] text-[#FAF5EE] pb-28">
+        <div className="px-4 py-4 max-w-5xl mx-auto">
+          <div className="py-16 text-center text-stone-400 bg-surface-100/50 rounded-2xl border border-surface-border animate-pulse">
+            <Utensils className="w-10 h-10 text-stone-600 mx-auto mb-2 opacity-60" />
+            <p className="text-sm font-medium">Menyu yuklanmoqda...</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (!resolution) {
     return (
@@ -57,7 +103,7 @@ export default function CustomerMenuPage({
     );
   }
 
-  const { restaurant, branch, table, categories, items } = resolution;
+  const { restaurant, branch, table, categories } = resolution;
 
   const filteredItems = items.filter((item) => {
     if (searchQuery.trim()) {
@@ -74,14 +120,6 @@ export default function CustomerMenuPage({
 
     return true;
   });
-
-  const categoryItemCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    items.forEach((item) => {
-      counts[item.category_id] = (counts[item.category_id] || 0) + 1;
-    });
-    return counts;
-  }, [items]);
 
   const handleAddToCart = (
     item: MenuItem,
