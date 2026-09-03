@@ -53,6 +53,21 @@ function underSection(pathname: string, section: string): boolean {
 // API QOIDALARI
 // ==========================================
 
+/**
+ * Zal xizmati amallari — ofitsiant (va admin) uchun ochiq.
+ * Stolni olish/bo'shatish/uzatish va buyurtmani tasdiqlash/rad etish.
+ */
+const WAITER_API_PATTERNS: RegExp[] = [
+  /^\/api\/tables\/[^/]+\/(claim|release|transfer)$/,
+  /^\/api\/orders\/[^/]+\/(accept|reject)$/,
+];
+
+/** ADMIN yoki WAITER bajara oladigan API so'rovlari. */
+function requiresWaiterApi(pathname: string, method: string): boolean {
+  if (method !== 'POST') return false;
+  return WAITER_API_PATTERNS.some((pattern) => pattern.test(pathname));
+}
+
 /** Faqat ADMIN bajara oladigan API so'rovlari. */
 function requiresAdminApi(pathname: string, method: string): boolean {
   // Xodimlar ro'yxati PIN kodlarni o'z ichiga oladi — hech qachon oshkor bo'lmasin.
@@ -60,6 +75,11 @@ function requiresAdminApi(pathname: string, method: string): boolean {
   if (underSection(pathname, '/api/notifications')) return true;
 
   if (!WRITE_METHODS.has(method)) return false;
+
+  // Zal amallari `/api/tables` ostida bo'lsa-da, admin talab qilmaydi —
+  // ular ofitsiantning kundalik ishi. Qolgan yozuv so'rovlari (stol qo'shish,
+  // QR yangilash) avvalgidek faqat ADMIN uchun qoladi.
+  if (requiresWaiterApi(pathname, method)) return false;
 
   return (
     underSection(pathname, '/api/menu-items') ||
@@ -155,12 +175,13 @@ export async function middleware(req: NextRequest) {
   // 2) API so'rovlari — javob har doim JSON, hech qachon redirect emas.
   if (pathname.startsWith('/api/')) {
     const needsAdmin = requiresAdminApi(pathname, method);
-    const needsStaff = !needsAdmin && requiresStaffApi(pathname, method);
+    const needsWaiter = !needsAdmin && requiresWaiterApi(pathname, method);
+    const needsStaff = !needsAdmin && !needsWaiter && requiresStaffApi(pathname, method);
 
     // Qolgan hamma narsa mehmon uchun ochiq qoladi: stolni aniqlash, menyu,
     // kategoriyalar, filiallar, restoran ma'lumoti, buyurtmalar (ro'yxat + yaratish),
     // buyurtma tarixi, realtime oqimi, rasm fayllari va ofitsiantni chaqirish (POST).
-    if (!needsAdmin && !needsStaff) {
+    if (!needsAdmin && !needsWaiter && !needsStaff) {
       return NextResponse.next();
     }
 
@@ -169,7 +190,14 @@ export async function middleware(req: NextRequest) {
       return unauthorizedJson('Bu amal uchun tizimga kirish talab etiladi.');
     }
 
-    const allowed: SessionRole[] = needsAdmin ? ['ADMIN'] : ['ADMIN', 'WAITER', 'KITCHEN'];
+    let allowed: SessionRole[];
+    if (needsAdmin) {
+      allowed = ['ADMIN'];
+    } else if (needsWaiter) {
+      allowed = ['ADMIN', 'WAITER'];
+    } else {
+      allowed = ['ADMIN', 'WAITER', 'KITCHEN'];
+    }
     if (!allowed.includes(session.role)) {
       return unauthorizedJson("Sizda bu amalni bajarish uchun ruxsat yo'q.");
     }

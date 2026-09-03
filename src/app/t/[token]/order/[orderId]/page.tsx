@@ -19,7 +19,9 @@ import {
   Receipt, 
   Sparkles, 
   AlertCircle,
-  Check
+  Check,
+  ConciergeBell,
+  Ban
 } from 'lucide-react';
 
 export default function CustomerOrderTrackingPage({
@@ -71,15 +73,24 @@ export default function CustomerOrderTrackingPage({
 
   const handleRealtimeEvent = useCallback(
     (payload: RealtimePayload) => {
-      if (payload.type === 'ORDER_STATUS_CHANGED' && payload.orderId === orderId) {
-        if (payload.order) {
-          setOrder(payload.order);
-        }
-        if (payload.newStatus === 'ready') {
-          soundManager.playOrderReadyChime();
-        }
-        refetchOrder();
+      // Ofitsiantning tasdiqlashi va rad etishi mijoz uchun ham holat o'zgarishi:
+      // bularsiz diner "tasdiq kutilmoqda" ekranida qotib qolardi.
+      const isStatusEvent =
+        payload.type === 'ORDER_STATUS_CHANGED' ||
+        payload.type === 'ORDER_ACCEPTED' ||
+        payload.type === 'ORDER_REJECTED';
+      if (!isStatusEvent) return;
+
+      const isThisOrder = payload.orderId === orderId || payload.order?.id === orderId;
+      if (!isThisOrder) return;
+
+      if (payload.order) {
+        setOrder(payload.order);
       }
+      if (payload.newStatus === 'ready') {
+        soundManager.playOrderReadyChime();
+      }
+      refetchOrder();
     },
     [orderId, refetchOrder]
   );
@@ -194,6 +205,14 @@ export default function CustomerOrderTrackingPage({
 
   const currentStep = getStepProgress(order.status);
 
+  /*
+   * Bekor qilingan buyurtmada uchta bosqichni ko'rsatish ma'nosiz — chiziq
+   * bo'sh qolib, mijozni chalg'itadi. Bosqichlar tuzilishi o'zgarmaydi,
+   * shunchaki bu holatda ularning o'rniga sabab va menyuga qaytish beriladi.
+   */
+  const isCancelled = order.status === 'cancelled';
+  const rejectionReason = order.rejection_reason?.trim();
+
   return (
     <main className="min-h-screen bg-[#0C0A09] text-[#FAF5EE] pb-24">
       {/* Top Header */}
@@ -232,9 +251,23 @@ export default function CustomerOrderTrackingPage({
         <div className="p-6 rounded-3xl bg-surface-100 border border-surface-border relative overflow-hidden shadow-luxury text-center">
           <div className="absolute top-0 right-0 w-32 h-32 bg-gold-400/10 rounded-full blur-3xl" />
           
-          <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-gold-400/20 to-amber-500/10 border-2 border-gold-400/40 flex items-center justify-center mx-auto mb-4 relative">
-            <div className="w-14 h-14 rounded-full bg-gold-400/20 flex items-center justify-center text-gold-300 animate-pulse">
-              {order.status === 'preparing' ? (
+          <div
+            className={`w-20 h-20 rounded-full border-2 flex items-center justify-center mx-auto mb-4 relative ${
+              isCancelled
+                ? 'bg-surface-200/60 border-stone-700'
+                : 'bg-gradient-to-tr from-gold-400/20 to-amber-500/10 border-gold-400/40'
+            }`}
+          >
+            <div
+              className={`w-14 h-14 rounded-full flex items-center justify-center ${
+                isCancelled
+                  ? 'bg-surface-300/60 text-stone-400'
+                  : 'bg-gold-400/20 text-gold-300 animate-pulse'
+              }`}
+            >
+              {isCancelled ? (
+                <Ban className="w-7 h-7" />
+              ) : order.status === 'preparing' ? (
                 <ChefHat className="w-7 h-7 animate-bounce" />
               ) : order.status === 'ready' ? (
                 <Sparkles className="w-7 h-7 animate-spin" />
@@ -246,8 +279,12 @@ export default function CustomerOrderTrackingPage({
             </div>
           </div>
 
-          <span className="text-[11px] font-mono uppercase tracking-widest text-gold-400/90 font-bold block mb-1">
-            Buyurtma Holati Jonli
+          <span
+            className={`text-[11px] font-mono uppercase tracking-widest font-bold block mb-1 ${
+              isCancelled ? 'text-stone-500' : 'text-gold-400/90'
+            }`}
+          >
+            {isCancelled ? 'Buyurtma Holati' : 'Buyurtma Holati Jonli'}
           </span>
 
           <h1 className="font-serif text-xl sm:text-2xl font-bold text-white mb-2">
@@ -258,50 +295,95 @@ export default function CustomerOrderTrackingPage({
             {currentStatusInfo.description}
           </p>
 
-          {/* Stepper Timeline */}
-          <div className="mt-8 pt-6 border-t border-surface-border/60">
-            <div className="grid grid-cols-3 gap-1 relative">
-              <div className="absolute top-3.5 left-6 right-6 h-0.5 bg-surface-border -z-0" />
-              <div
-                className="absolute top-3.5 left-6 h-0.5 bg-gradient-to-r from-gold-400 to-amber-500 -z-0 transition-all duration-700"
-                style={{
-                  // Chiziq aynan birinchi va oxirgi doira orasida to'ladi
-                  // (ikki chetdagi 1.5rem bo'shliq hisobga olingan).
-                  width: `calc((100% - 3rem) * ${Math.min(
-                    1,
-                    Math.max(0, (currentStep - 1) / (milestones.length - 1))
-                  )})`,
-                }}
-              />
-
-              {milestones.map((m, idx) => {
-                const stepNum = idx + 1;
-                const isPassed = currentStep >= stepNum;
-                const isCurrent = Math.floor(currentStep) === stepNum;
-
-                return (
-                  <div key={m.key} className="flex flex-col items-center relative z-10">
-                    <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500 ${
-                        isPassed
-                          ? 'bg-gold-400 text-stone-950 shadow-gold-glow scale-105'
-                          : 'bg-surface-200 text-stone-500 border border-surface-border'
-                      } ${isCurrent ? 'ring-4 ring-gold-400/20' : ''}`}
-                    >
-                      {isPassed ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : stepNum}
-                    </div>
-                    <span
-                      className={`text-[10px] mt-2 font-medium tracking-tight truncate max-w-full ${
-                        isPassed ? 'text-gold-300 font-bold' : 'text-stone-500'
-                      }`}
-                    >
-                      {m.label}
-                    </span>
-                  </div>
-                );
-              })}
+          {/* Xizmat ko'rsatayotgan ofitsiant — stolga qo'yilgan kichik xizmat kartasi kabi */}
+          {order.waiter_name && (
+            <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-200/50 border border-surface-border/70">
+              <ConciergeBell className="w-4 h-4 text-gold-400 flex-shrink-0" />
+              <span className="text-[11px] text-stone-400">
+                Sizga xizmat ko&apos;rsatmoqda:{' '}
+                <span className="text-gold-300 font-medium">{order.waiter_name}</span>
+              </span>
             </div>
-          </div>
+          )}
+
+          {/* Stepper Timeline */}
+          {!isCancelled && (
+            <div className="mt-8 pt-6 border-t border-surface-border/60">
+              <div className="grid grid-cols-3 gap-1 relative">
+                <div className="absolute top-3.5 left-6 right-6 h-0.5 bg-surface-border -z-0" />
+                <div
+                  className="absolute top-3.5 left-6 h-0.5 bg-gradient-to-r from-gold-400 to-amber-500 -z-0 transition-all duration-700"
+                  style={{
+                    // Chiziq aynan birinchi va oxirgi doira orasida to'ladi
+                    // (ikki chetdagi 1.5rem bo'shliq hisobga olingan).
+                    width: `calc((100% - 3rem) * ${Math.min(
+                      1,
+                      Math.max(0, (currentStep - 1) / (milestones.length - 1))
+                    )})`,
+                  }}
+                />
+
+                {milestones.map((m, idx) => {
+                  const stepNum = idx + 1;
+                  const isPassed = currentStep >= stepNum;
+                  const isCurrent = Math.floor(currentStep) === stepNum;
+
+                  return (
+                    <div key={m.key} className="flex flex-col items-center relative z-10">
+                      <div
+                        className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500 ${
+                          isPassed
+                            ? 'bg-gold-400 text-stone-950 shadow-gold-glow scale-105'
+                            : 'bg-surface-200 text-stone-500 border border-surface-border'
+                        } ${isCurrent ? 'ring-4 ring-gold-400/20' : ''}`}
+                      >
+                        {isPassed ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : stepNum}
+                      </div>
+                      <span
+                        className={`text-[10px] mt-2 font-medium tracking-tight truncate max-w-full ${
+                          isPassed ? 'text-gold-300 font-bold' : 'text-stone-500'
+                        }`}
+                      >
+                        {m.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Rad etilgan buyurtma: sabab hurmat bilan aytiladi, yo'l menyuga qaytadi */}
+          {isCancelled && (
+            <div className="mt-7 pt-6 border-t border-surface-border/60">
+              {rejectionReason && (
+                <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-surface-200/50 border border-surface-border text-left">
+                  <Ban className="w-4 h-4 text-stone-400 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-wider text-stone-500 font-medium mb-1">
+                      Bekor qilish sababi
+                    </div>
+                    <p className="text-xs text-stone-200 leading-relaxed break-words">
+                      {rejectionReason}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[11px] text-stone-400 leading-relaxed mt-4">
+                Noqulaylik uchun uzr so&apos;raymiz. Menyudan boshqa taom tanlashingiz yoki
+                ofitsiantimizdan yordam so&apos;rashingiz mumkin.
+              </p>
+
+              <Link
+                href={`/t/${token}`}
+                className="mt-4 w-full py-3 px-4 rounded-xl bg-gold-400 hover:bg-gold-300 text-stone-950 text-xs font-bold tracking-wide transition-colors flex items-center justify-center gap-2"
+              >
+                <Utensils className="w-4 h-4" />
+                <span>Menyuga qaytish</span>
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Digital Receipt */}

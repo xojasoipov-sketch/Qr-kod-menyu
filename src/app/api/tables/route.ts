@@ -6,7 +6,13 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const branchId = searchParams.get('branch_id') || 'branch-001';
-  const tables = db.getTablesByBranch(branchId);
+  // Ixtiyoriy filtr: faqat shu ofitsiantga biriktirilgan stollar.
+  const waiterId = (searchParams.get('waiter_id') || '').trim();
+
+  const tables = waiterId
+    ? db.getTablesByWaiter(waiterId).filter((t) => t.branch_id === branchId)
+    : db.getTablesByBranch(branchId);
+
   return NextResponse.json({ tables });
 }
 

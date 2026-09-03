@@ -1,7 +1,11 @@
 import { OrderStatus } from '@/types/database';
 
 export const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['confirmed', 'preparing', 'cancelled'],
+  // Oshxona ofitsiant tasdiqlamagan buyurtmani ola olmaydi: 'preparing' bu yerdan olib tashlandi.
+  // 'confirmed' ham shu ro'yxatda yo'q — buyurtmani faqat ofitsiant, `POST /api/orders/[id]/accept`
+  // orqali tasdiqlay oladi (u `accepted_at` ni ham to'ldiradi). Aks holda oshxona
+  // holatni to'g'ridan-to'g'ri 'confirmed' ga o'tkazib, tasdiqlash bosqichini chetlab o'tar edi.
+  pending: ['cancelled'],
   confirmed: ['preparing', 'cancelled'],
   preparing: ['ready', 'cancelled'],
   ready: ['delivered', 'completed'],
@@ -42,8 +46,9 @@ export const STATUS_DISPLAY_INFO: Record<
   { label: string; description: string; step: number; color: string; bg: string }
 > = {
   pending: {
-    label: 'Buyurtma qabul qilindi',
-    description: 'Buyurtmangiz tizimga tushdi va oshxonaga uzatildi.',
+    label: 'Ofitsiant tasdiqlashini kutmoqda',
+    description:
+      'Buyurtmangiz ofitsiantga yuborildi. U tasdiqlagach oshxona tayyorlashni boshlaydi.',
     step: 1,
     color: 'text-amber-400',
     bg: 'bg-amber-500/10 border-amber-500/30',

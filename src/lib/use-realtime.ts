@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { REALTIME_EVENT_TYPES } from '@/lib/realtime/event-bus';
 import type { RealtimePayload, RealtimeEventType } from '@/lib/realtime/event-bus';
 
 export interface RealtimeFilters {
@@ -9,14 +10,12 @@ export interface RealtimeFilters {
   orderId?: string;
 }
 
-const KNOWN_EVENT_TYPES: ReadonlySet<RealtimeEventType> = new Set<RealtimeEventType>([
-  'ORDER_CREATED',
-  'ORDER_STATUS_CHANGED',
-  'WAITER_CALLED',
-  'WAITER_CALL_ACKNOWLEDGED',
-  'MENU_UPDATED',
-  'TABLE_UPDATED',
-]);
+/**
+ * Server bilan bir xil ro'yxat — event-bus dan olinadi, qo'lda takrorlanmaydi.
+ * Shu sabab yangi hodisa turi qo'shilganda u avtomatik ravishda brauzerga ham
+ * o'tadi (ilgari bu ro'yxat eskirib qolib, hodisalar jim yo'qolardi).
+ */
+const KNOWN_EVENT_TYPES: ReadonlySet<RealtimeEventType> = new Set(REALTIME_EVENT_TYPES);
 
 function isRealtimePayload(value: unknown): value is RealtimePayload {
   if (typeof value !== 'object' || value === null) return false;

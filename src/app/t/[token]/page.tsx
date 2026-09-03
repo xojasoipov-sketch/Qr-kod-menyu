@@ -11,7 +11,7 @@ import FeaturedCarousel from '@/components/customer/FeaturedCarousel';
 import FoodCard from '@/components/customer/FoodCard';
 import ProductDetailModal from '@/components/customer/ProductDetailModal';
 import CartDrawer from '@/components/customer/CartDrawer';
-import { AlertCircle, Utensils } from 'lucide-react';
+import { AlertCircle, ConciergeBell, Utensils } from 'lucide-react';
 import Link from 'next/link';
 
 type ResolutionStatus = 'loading' | 'ready' | 'not-found';
@@ -110,7 +110,14 @@ export default function CustomerMenuPage({
 
   const handleRealtimeEvent = useCallback(
     (payload: RealtimePayload) => {
-      if (payload.type === 'MENU_UPDATED' || payload.type === 'TABLE_UPDATED') {
+      if (
+        payload.type === 'MENU_UPDATED' ||
+        payload.type === 'TABLE_UPDATED' ||
+        // Stol ofitsiantga o'tgani yoki bo'shagani sarlavha yonidagi
+        // "Ofitsiantingiz" yorlig'ini yangilaydi.
+        payload.type === 'TABLE_CLAIMED' ||
+        payload.type === 'TABLE_RELEASED'
+      ) {
         scheduleRefresh();
       }
     },
@@ -180,6 +187,11 @@ export default function CustomerMenuPage({
   }
 
   const { restaurant, branch, table, categories } = resolution;
+
+  // Stol biriktirilgan bo'lsagina ism ko'rsatiladi. Bo'sh stolda hech narsa
+  // aytilmaydi — "ofitsiant biriktirilmagan" degan xabar mijozni bekorga
+  // xavotirga soladi.
+  const claimedWaiterName = table.claimed_by_name?.trim();
 
   const filteredItems = items.filter((item) => {
     if (searchQuery.trim()) {
@@ -256,17 +268,34 @@ export default function CustomerMenuPage({
       />
 
       {/* Live Service Status — quiet signal that this menu keeps itself in sync */}
-      <div className="flex items-center justify-center gap-1.5 py-1.5 bg-[#14110E] border-b border-surface-border/70">
-        <span
-          className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400' : 'bg-stone-600'}`}
-        />
-        <span
-          className={`text-[10px] uppercase tracking-wider font-medium ${
-            isLive ? 'text-emerald-300/90' : 'text-stone-500'
-          }`}
-        >
-          Jonli
+      <div className="flex items-center justify-center gap-3 px-4 py-1.5 bg-[#14110E] border-b border-surface-border/70">
+        <span className="flex items-center gap-1.5 flex-shrink-0">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400' : 'bg-stone-600'}`}
+          />
+          <span
+            className={`text-[10px] uppercase tracking-wider font-medium ${
+              isLive ? 'text-emerald-300/90' : 'text-stone-500'
+            }`}
+          >
+            Jonli
+          </span>
         </span>
+
+        {claimedWaiterName && (
+          <>
+            <span className="w-px h-3 bg-surface-border flex-shrink-0" aria-hidden="true" />
+            <span className="flex items-center gap-1.5 min-w-0">
+              <ConciergeBell className="w-3.5 h-3.5 text-gold-400/90 flex-shrink-0" />
+              <span className="text-[10px] uppercase tracking-wider font-medium text-stone-500 flex-shrink-0">
+                Ofitsiantingiz:
+              </span>
+              <span className="text-[11px] font-medium text-gold-300/90 truncate">
+                {claimedWaiterName}
+              </span>
+            </span>
+          </>
+        )}
       </div>
 
       {/* Category Nav */}

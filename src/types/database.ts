@@ -51,6 +51,14 @@ export interface Table {
   capacity?: number;
   zone?: string; // e.g. 'Indoor Main Hall', 'Terrace', 'VIP Lounge'
   is_active: boolean;
+  /** Stolni o'z zimmasiga olgan ofitsiantning xodim id si. */
+  claimed_by?: string;
+  /** Stolni olgan ofitsiantning ismi (interfeysda ko'rsatish uchun). */
+  claimed_by_name?: string;
+  /** Stol biriktirilgan vaqt (ISO). */
+  claimed_at?: string;
+  /** Stoldagi mehmonlar soni. */
+  guest_count?: number;
   created_at: string;
   updated_at: string;
 }
@@ -161,6 +169,14 @@ export interface Order {
   items: OrderItem[];
   table_name?: string;
   table_number?: number;
+  /** Buyurtma tushgan paytda stolni olgan (yoki buyurtmani tasdiqlagan) ofitsiant id si. */
+  waiter_id?: string;
+  /** Ofitsiantning ismi (interfeysda ko'rsatish uchun). */
+  waiter_name?: string;
+  /** Ofitsiant buyurtmani tasdiqlagan vaqt (ISO). */
+  accepted_at?: string;
+  /** Ofitsiant buyurtmani rad etgan bo'lsa — sababi. */
+  rejection_reason?: string;
   created_at: string;
   updated_at: string;
 }

@@ -25,9 +25,22 @@ import {
   INITIAL_ORDERS, 
   INITIAL_WAITER_CALLS 
 } from './seed-data';
-import { assertValidTransition } from '../order-state-machine';
-import { eventBus } from '../realtime/event-bus';
+import { assertValidTransition, STATUS_DISPLAY_INFO } from '../order-state-machine';
+import { eventBus, RealtimeEventType } from '../realtime/event-bus';
 import { nanoid } from 'nanoid';
+
+/** Stolga oid amallar natijasi — istisno tashlamaydi, doim natija qaytaradi. */
+export type TableActionResult =
+  | { ok: true; table: Table }
+  | { ok: false; error: string };
+
+/** Buyurtmaga oid amallar natijasi — istisno tashlamaydi, doim natija qaytaradi. */
+export type OrderActionResult =
+  | { ok: true; order: Order }
+  | { ok: false; error: string };
+
+/** Hali yakunlanmagan (stol band hisoblanadigan) buyurtma holatlari. */
+const UNFINISHED_ORDER_STATUSES: OrderStatus[] = ['pending', 'confirmed', 'preparing', 'ready'];
 
 class RestaurantDataStore {
   public restaurants: Restaurant[] = [...INITIAL_RESTAURANTS];
@@ -93,6 +106,212 @@ class RestaurantDataStore {
 
   getTablesByBranch(branchId: string): Table[] {
     return this.tables.filter((t) => t.branch_id === branchId);
+  }
+
+  // --- STOLNI OFITSIANTGA BIRIKTIRISH (CLAIM / RELEASE / TRANSFER) ---
+
+  /** Ofitsiantga biriktirilgan stollar ro'yxati. */
+  getTablesByWaiter(staffId: string): Table[] {
+    if (!staffId) return [];
+    return this.tables.filter((t) => t.claimed_by === staffId);
+  }
+
+  /** Stoldagi hali yakunlanmagan buyurtmalar (pending/confirmed/preparing/ready). */
+  private getUnfinishedOrdersByTable(tableId: string): Order[] {
+    return this.orders.filter(
+      (o) => o.table_id === tableId && UNFINISHED_ORDER_STATUSES.includes(o.status)
+    );
+  }
+
+  private emitTableEvent(
+    type: Extract<RealtimeEventType, 'TABLE_CLAIMED' | 'TABLE_RELEASED'>,
+    table: Table,
+    staff: { id: string; name: string },
+    timestamp: string,
+    data?: Record<string, unknown>
+  ) {
+    const branch = this.getBranch(table.branch_id);
+    eventBus.emit({
+      type,
+      timestamp,
+      restaurant_id: branch?.restaurant_id || '',
+      branch_id: table.branch_id,
+      tableId: table.id,
+      table,
+      staffId: staff.id,
+      staffName: staff.name,
+      data,
+    });
+  }
+
+  /**
+   * Stolni ofitsiantga biriktiradi. Idempotent: o'sha ofitsiant qayta chaqirsa ham muvaffaqiyat.
+   * Stol boshqa ofitsiantda bo'lsa — xato qaytadi (istisno tashlanmaydi).
+   */
+  claimTable(tableId: string, staff: { id: string; name: string }): TableActionResult {
+    const table = this.getTable(tableId);
+    if (!table) {
+      return { ok: false, error: 'Stol topilmadi.' };
+    }
+    if (!table.is_active) {
+      return { ok: false, error: 'Bu stol hozirda faol emas.' };
+    }
+    if (table.claimed_by && table.claimed_by !== staff.id) {
+      const owner = table.claimed_by_name || 'boshqa ofitsiant';
+      return {
+        ok: false,
+        error: `Bu stolni ${owner} olgan. Avval u bo'shatishi kerak.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const alreadyMine = table.claimed_by === staff.id;
+
+    table.claimed_by = staff.id;
+    table.claimed_by_name = staff.name;
+    table.claimed_at = alreadyMine ? table.claimed_at || now : now;
+    table.updated_at = now;
+
+    this.emitTableEvent('TABLE_CLAIMED', table, staff, now, {
+      action: alreadyMine ? 'CLAIM_REPEATED' : 'CLAIMED',
+    });
+
+    return { ok: true, table };
+  }
+
+  /**
+   * Stolni bo'shatadi. Faqat stolni olgan ofitsiant yoki administrator bo'shata oladi.
+   * Stolda tugallanmagan buyurtma bo'lsa — hech kimga (admin uchun ham) ruxsat berilmaydi.
+   */
+  releaseTable(
+    tableId: string,
+    staff: { id: string; name: string },
+    isAdmin: boolean
+  ): TableActionResult {
+    const table = this.getTable(tableId);
+    if (!table) {
+      return { ok: false, error: 'Stol topilmadi.' };
+    }
+    if (!table.claimed_by) {
+      return { ok: false, error: 'Bu stol allaqachon bo\'sh — biriktirilgan ofitsiant yo\'q.' };
+    }
+    if (!isAdmin && table.claimed_by !== staff.id) {
+      const owner = table.claimed_by_name || 'boshqa ofitsiant';
+      return {
+        ok: false,
+        error: `Bu stol ${owner} ga biriktirilgan. Uni faqat o'sha ofitsiant yoki administrator bo'shata oladi.`,
+      };
+    }
+
+    const unfinished = this.getUnfinishedOrdersByTable(table.id);
+    if (unfinished.length > 0) {
+      const numbers = unfinished.map((o) => o.order_number).join(', ');
+      return {
+        ok: false,
+        error: `Bu stolda ${unfinished.length} ta tugallanmagan buyurtma bor (${numbers}). Avval ularni yakunlang yoki bekor qiling, so'ng stolni bo'shating.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const previousOwner = { id: table.claimed_by, name: table.claimed_by_name || '' };
+
+    delete table.claimed_by;
+    delete table.claimed_by_name;
+    delete table.claimed_at;
+    delete table.guest_count;
+    table.updated_at = now;
+
+    this.emitTableEvent('TABLE_RELEASED', table, staff, now, {
+      action: 'RELEASED',
+      released_by_admin: isAdmin && previousOwner.id !== staff.id,
+      previous_staff_id: previousOwner.id,
+      previous_staff_name: previousOwner.name,
+    });
+
+    return { ok: true, table };
+  }
+
+  /**
+   * Stolni boshqa ofitsiantga uzatadi. Faqat stolni olgan ofitsiant yoki administrator uzata oladi.
+   */
+  transferTable(
+    tableId: string,
+    fromStaffId: string,
+    toStaff: { id: string; name: string },
+    isAdmin: boolean
+  ): TableActionResult {
+    const table = this.getTable(tableId);
+    if (!table) {
+      return { ok: false, error: 'Stol topilmadi.' };
+    }
+    if (!table.is_active) {
+      return { ok: false, error: 'Bu stol hozirda faol emas.' };
+    }
+    if (!toStaff?.id) {
+      return { ok: false, error: 'Stol uzatiladigan ofitsiantni tanlang.' };
+    }
+
+    const target = this.staff.find((s) => s.id === toStaff.id);
+    if (!target) {
+      return { ok: false, error: 'Ofitsiant topilmadi.' };
+    }
+    if (!target.is_active) {
+      return { ok: false, error: `${target.name} hozir faol emas, stolni unga uzatib bo'lmaydi.` };
+    }
+    // Oshxona xodimi zalda stolga xizmat qilmaydi (uning uchun `/waiter` sahifasi ham yopiq),
+    // shuning uchun stol unga biriktirilsa — stol ham, undagi buyurtmalar ham egasiz qoladi.
+    if (target.role === 'KITCHEN') {
+      return {
+        ok: false,
+        error: `${target.name} oshxona xodimi — stolni faqat ofitsiantga uzatish mumkin.`,
+      };
+    }
+    const targetName = (toStaff.name || '').trim() || target.name;
+
+    if (!isAdmin) {
+      if (!table.claimed_by) {
+        return {
+          ok: false,
+          error: 'Bu stol hech kimga biriktirilmagan. Avval stolni o\'zingizga oling.',
+        };
+      }
+      if (table.claimed_by !== fromStaffId) {
+        const owner = table.claimed_by_name || 'boshqa ofitsiant';
+        return {
+          ok: false,
+          error: `Bu stol ${owner} ga biriktirilgan. Uni faqat o'sha ofitsiant yoki administrator uzata oladi.`,
+        };
+      }
+    }
+
+    const now = new Date().toISOString();
+    const previousOwner = {
+      id: table.claimed_by || '',
+      name: table.claimed_by_name || '',
+    };
+
+    if (previousOwner.id === toStaff.id) {
+      // Idempotent: stol allaqachon o'sha ofitsiantda.
+      table.claimed_by_name = targetName;
+      table.updated_at = now;
+      this.emitTableEvent('TABLE_CLAIMED', table, { id: toStaff.id, name: targetName }, now, {
+        action: 'TRANSFER_REPEATED',
+      });
+      return { ok: true, table };
+    }
+
+    table.claimed_by = toStaff.id;
+    table.claimed_by_name = targetName;
+    table.claimed_at = now;
+    table.updated_at = now;
+
+    this.emitTableEvent('TABLE_CLAIMED', table, { id: toStaff.id, name: targetName }, now, {
+      action: 'TRANSFERRED',
+      previous_staff_id: previousOwner.id,
+      previous_staff_name: previousOwner.name,
+    });
+
+    return { ok: true, table };
   }
 
   createTable(data: Omit<Table, 'id' | 'created_at' | 'updated_at' | 'qr_token'> & { qr_token?: string }): Table {
@@ -390,6 +609,10 @@ class RestaurantDataStore {
       items: orderItems,
       table_name: table.name,
       table_number: table.number,
+      // Stolni olgan ofitsiant buyurtmaga biriktiriladi. Stol hech kimda bo'lmasa,
+      // buyurtma baribir yaratiladi — ofitsiant maydonlari bo'sh qoladi.
+      waiter_id: table.claimed_by,
+      waiter_name: table.claimed_by_name,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -467,6 +690,134 @@ class RestaurantDataStore {
     });
 
     return order;
+  }
+
+  /** Ofitsiantga biriktirilgan buyurtmalar. */
+  getOrdersByWaiter(staffId: string): Order[] {
+    if (!staffId) return [];
+    return this.orders.filter((o) => o.waiter_id === staffId);
+  }
+
+  private emitOrderStaffEvent(
+    type: Extract<RealtimeEventType, 'ORDER_ACCEPTED' | 'ORDER_REJECTED'>,
+    order: Order,
+    staff: { id: string; name: string },
+    timestamp: string,
+    reason?: string
+  ) {
+    eventBus.emit({
+      type,
+      timestamp,
+      restaurant_id: order.restaurant_id,
+      branch_id: order.branch_id,
+      order,
+      orderId: order.id,
+      newStatus: order.status,
+      tableId: order.table_id,
+      staffId: staff.id,
+      staffName: staff.name,
+      reason,
+    });
+  }
+
+  /**
+   * Buyurtmaga ofitsiant biriktiradi. Buyurtma tushganda stol allaqachon kimningdir
+   * zimmasida bo'lsa, o'sha biriktiruv saqlanadi; bo'sh bo'lsa — amalni bajargan
+   * ofitsiant biriktiriladi (kim tasdiqlagani status tarixida ham qoladi).
+   */
+  private attachWaiterIfUnassigned(order: Order, staff: { id: string; name: string }) {
+    if (!order.waiter_id) {
+      order.waiter_id = staff.id;
+      order.waiter_name = staff.name;
+    }
+  }
+
+  /**
+   * Ofitsiant buyurtmani tasdiqlaydi: faqat 'pending' holatdan 'confirmed' ga.
+   * Shundan keyingina oshxona tayyorlashni boshlay oladi.
+   */
+  acceptOrder(orderId: string, staff: { id: string; name: string }): OrderActionResult {
+    const order = this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, error: 'Buyurtma topilmadi.' };
+    }
+    if (order.status !== 'pending') {
+      return {
+        ok: false,
+        error: `Bu buyurtmani tasdiqlab bo'lmaydi — u allaqachon "${STATUS_DISPLAY_INFO[order.status].label}" holatida.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const prevStatus = order.status;
+
+    order.status = 'confirmed';
+    order.accepted_at = now;
+    this.attachWaiterIfUnassigned(order, staff);
+    order.updated_at = now;
+
+    this.statusHistory.push({
+      id: `osh-${nanoid(8)}`,
+      order_id: order.id,
+      previous_status: prevStatus,
+      new_status: 'confirmed',
+      changed_by: 'OFITSIANT',
+      reason: `${staff.name} buyurtmani tasdiqladi`,
+      created_at: now,
+    });
+
+    this.emitOrderStaffEvent('ORDER_ACCEPTED', order, staff, now);
+
+    return { ok: true, order };
+  }
+
+  /**
+   * Ofitsiant buyurtmani rad etadi: faqat 'pending' holatdan 'cancelled' ga.
+   * Sabab majburiy — u buyurtmada saqlanadi va mijozga ko'rsatiladi.
+   */
+  rejectOrder(
+    orderId: string,
+    staff: { id: string; name: string },
+    reason: string
+  ): OrderActionResult {
+    const order = this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, error: 'Buyurtma topilmadi.' };
+    }
+
+    const trimmedReason = String(reason ?? '').trim();
+    if (!trimmedReason) {
+      return { ok: false, error: 'Rad etish sababini yozing.' };
+    }
+
+    if (order.status !== 'pending') {
+      return {
+        ok: false,
+        error: `Bu buyurtmani rad etib bo'lmaydi — u allaqachon "${STATUS_DISPLAY_INFO[order.status].label}" holatida.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const prevStatus = order.status;
+
+    order.status = 'cancelled';
+    order.rejection_reason = trimmedReason;
+    this.attachWaiterIfUnassigned(order, staff);
+    order.updated_at = now;
+
+    this.statusHistory.push({
+      id: `osh-${nanoid(8)}`,
+      order_id: order.id,
+      previous_status: prevStatus,
+      new_status: 'cancelled',
+      changed_by: 'OFITSIANT',
+      reason: `${staff.name} rad etdi: ${trimmedReason}`,
+      created_at: now,
+    });
+
+    this.emitOrderStaffEvent('ORDER_REJECTED', order, staff, now, trimmedReason);
+
+    return { ok: true, order };
   }
 
   // --- WAITER CALLS ---

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db/store';
 import { clientIp, rateLimit, tooManyRequests } from '@/lib/security/rate-limit';
+import type { OrderStatus } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +11,45 @@ const ORDER_LIMIT_PER_IP = 10;
 const ORDER_LIMIT_PER_TABLE = 4;
 const ONE_MINUTE_MS = 60 * 1000;
 
+/** `?status=` filtrida ruxsat etilgan qiymatlar. */
+const ORDER_STATUSES: OrderStatus[] = [
+  'pending',
+  'confirmed',
+  'preparing',
+  'ready',
+  'delivered',
+  'completed',
+  'cancelled',
+];
+
+function isOrderStatus(value: string): value is OrderStatus {
+  return (ORDER_STATUSES as string[]).includes(value);
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurant_id') || 'rest-001';
   const branchId = searchParams.get('branch_id');
   const tableId = searchParams.get('table_id');
+  // Ixtiyoriy filtrlar: ofitsiant va holat(lar).
+  const waiterId = (searchParams.get('waiter_id') || '').trim();
+  const statusParam = (searchParams.get('status') || '').trim();
+
+  // `?status=pending,confirmed` — vergul bilan bir nechta holat.
+  const requestedStatuses = statusParam
+    ? statusParam
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0)
+    : [];
+
+  const unknownStatus = requestedStatuses.find((value) => !isOrderStatus(value));
+  if (unknownStatus) {
+    return NextResponse.json(
+      { error: `Noma'lum buyurtma holati: "${unknownStatus}".` },
+      { status: 400 }
+    );
+  }
 
   let orders = db.getOrdersByRestaurant(restaurantId);
   if (branchId) {
@@ -22,6 +57,13 @@ export async function GET(req: NextRequest) {
   }
   if (tableId) {
     orders = orders.filter((o) => o.table_id === tableId);
+  }
+  if (waiterId) {
+    orders = orders.filter((o) => o.waiter_id === waiterId);
+  }
+  if (requestedStatuses.length > 0) {
+    const statuses = new Set(requestedStatuses);
+    orders = orders.filter((o) => statuses.has(o.status));
   }
 
   return NextResponse.json({ orders });
