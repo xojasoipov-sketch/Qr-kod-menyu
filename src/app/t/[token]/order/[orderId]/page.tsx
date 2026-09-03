@@ -163,21 +163,31 @@ export default function CustomerOrderTrackingPage({
   const { restaurant, table } = resolution;
   const currentStatusInfo = STATUS_DISPLAY_INFO[order.status];
 
+  /*
+   * Mijoz uchun uchta bosqich yetarli. "Yetkazildi" bosqichi olib tashlangan:
+   * ofitsiant taomni stolga qo'yganini mijoz o'z ko'zi bilan ko'rib turadi,
+   * telefonda buni yana takrorlash ortiqcha. Oshxona va ofitsiant tomonida
+   * "yetkazildi" holati o'z o'rnida qoladi — u yerda bu ish holati sifatida
+   * kerak.
+   */
   const milestones: { key: OrderStatus; label: string; icon: React.ReactNode }[] = [
     { key: 'pending', label: 'Qabul qilindi', icon: <CheckCircle2 className="w-4 h-4" /> },
     { key: 'preparing', label: 'Pishirilmoqda', icon: <ChefHat className="w-4 h-4" /> },
     { key: 'ready', label: 'Stolga tayyor', icon: <Sparkles className="w-4 h-4" /> },
-    { key: 'delivered', label: 'Yetkazildi', icon: <Utensils className="w-4 h-4" /> },
   ];
+
+  const lastStep = milestones.length;
 
   const getStepProgress = (status: OrderStatus) => {
     switch (status) {
       case 'pending': return 1;
       case 'confirmed': return 1.5;
       case 'preparing': return 2;
-      case 'ready': return 3;
+      // Taom stolga chiqqach kuzatuv tugaydi — keyingi holatlar ham
+      // shu oxirgi bosqichda to'liq bajarilgan ko'rinadi.
+      case 'ready':
       case 'delivered':
-      case 'completed': return 4;
+      case 'completed': return lastStep;
       default: return 0;
     }
   };
@@ -250,11 +260,18 @@ export default function CustomerOrderTrackingPage({
 
           {/* Stepper Timeline */}
           <div className="mt-8 pt-6 border-t border-surface-border/60">
-            <div className="grid grid-cols-4 gap-1 relative">
+            <div className="grid grid-cols-3 gap-1 relative">
               <div className="absolute top-3.5 left-6 right-6 h-0.5 bg-surface-border -z-0" />
               <div
                 className="absolute top-3.5 left-6 h-0.5 bg-gradient-to-r from-gold-400 to-amber-500 -z-0 transition-all duration-700"
-                style={{ width: `${Math.min(100, Math.max(0, ((currentStep - 1) / 3) * 100))}%` }}
+                style={{
+                  // Chiziq aynan birinchi va oxirgi doira orasida to'ladi
+                  // (ikki chetdagi 1.5rem bo'shliq hisobga olingan).
+                  width: `calc((100% - 3rem) * ${Math.min(
+                    1,
+                    Math.max(0, (currentStep - 1) / (milestones.length - 1))
+                  )})`,
+                }}
               />
 
               {milestones.map((m, idx) => {
