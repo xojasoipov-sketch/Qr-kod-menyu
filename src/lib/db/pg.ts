@@ -18,12 +18,21 @@ const globalForPg = globalThis as unknown as { __pgPool?: Pool };
  */
 export function getPool(): Pool {
   if (globalForPg.__pgPool) return globalForPg.__pgPool;
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
+  const rawConnectionString = process.env.DATABASE_URL;
+  if (!rawConnectionString) {
     throw new Error(
       "DATABASE_URL sozlanmagan. Bazaga ulanish uchun bu muhit o'zgaruvchisi kerak."
     );
   }
+  // `pg` parses `?sslmode=...` from the connection string itself and — despite the
+  // docs implying otherwise — that parsed value OVERRIDES the `ssl` option below
+  // (see node_modules/pg/lib/connection-parameters.js: `Object.assign({}, config,
+  // parse(connectionString))`, parsed values win). `sslmode=require` parses to
+  // `ssl: {}`, i.e. rejectUnauthorized defaults back to true, which fails against
+  // Supabase's pooler cert chain with "self-signed certificate in certificate
+  // chain". Stripping sslmode here means our own `ssl` option below is the only
+  // one that ever applies, regardless of what ends up in DATABASE_URL.
+  const connectionString = rawConnectionString.replace(/([?&])sslmode=[^&]*&?/i, '$1').replace(/[?&]$/, '');
   const pool = new Pool({
     connectionString,
     ssl: { rejectUnauthorized: false },
