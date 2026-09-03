@@ -42,7 +42,7 @@ function badRequest(error: string): NextResponse {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurant_id') || 'rest-001';
-  const staff = db.staff.filter((s) => s.restaurant_id === restaurantId);
+  const staff = await db.getStaffByRestaurant(restaurantId);
   return NextResponse.json({ staff });
 }
 
@@ -107,18 +107,14 @@ export async function POST(req: NextRequest) {
   const restaurantId = text(body.restaurant_id) || 'rest-001';
   const branchId = text(body.branch_id) || undefined;
 
-  if (
-    db.staff.some(
-      (s) => s.restaurant_id === restaurantId && s.email.toLowerCase() === email
-    )
-  ) {
+  if (await db.staffEmailTaken(restaurantId, email)) {
     return badRequest('Bu elektron pochta bilan xodim allaqachon mavjud.');
   }
 
   // --- Yaratish ---
   let created;
   try {
-    created = db.createStaff({
+    created = await db.createStaff({
       restaurant_id: restaurantId,
       branch_id: branchId,
       name,
@@ -138,7 +134,8 @@ export async function POST(req: NextRequest) {
   // yaratilgan, shuning uchun javob baribir 201 bo'ladi.
   let deliveries: NotificationLog[] = [];
   try {
-    const restaurantName = db.getRestaurant(created.restaurant_id)?.name || 'Restoran';
+    const restaurant = await db.getRestaurant(created.restaurant_id);
+    const restaurantName = restaurant?.name || 'Restoran';
     deliveries = await notifyStaffInvite(created, restaurantName, (entry) => db.logNotification(entry));
   } catch {
     deliveries = [];

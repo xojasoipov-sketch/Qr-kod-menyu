@@ -30,12 +30,12 @@ export async function POST(
   // Parol bilan kirgan administratorda xodim id si bo'lmaydi — u ham stol ola olsin.
   const staff = { id: session.staffId || 'admin', name: session.name };
 
-  const table = db.getTable(id);
+  const table = await db.getTable(id);
   if (!table) {
     return NextResponse.json({ error: 'Stol topilmadi.' }, { status: 404 });
   }
 
-  const result = db.claimTable(id, staff);
+  const result = await db.claimTable(id, staff);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 409 });
   }

@@ -10,8 +10,8 @@ export async function GET(req: NextRequest) {
   const waiterId = (searchParams.get('waiter_id') || '').trim();
 
   const tables = waiterId
-    ? db.getTablesByWaiter(waiterId).filter((t) => t.branch_id === branchId)
-    : db.getTablesByBranch(branchId);
+    ? (await db.getTablesByWaiter(waiterId)).filter((t) => t.branch_id === branchId)
+    : await db.getTablesByBranch(branchId);
 
   return NextResponse.json({ tables });
 }
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const newTable = db.createTable(body);
+    const newTable = await db.createTable(body);
     return NextResponse.json({ success: true, table: newTable }, { status: 201 });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to create table';

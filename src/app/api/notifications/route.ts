@@ -14,5 +14,5 @@ export const dynamic = 'force-dynamic';
  * tomonidan faqat ADMIN uchun ochiq.
  */
 export async function GET() {
-  return NextResponse.json({ notifications: db.getNotifications(50) });
+  return NextResponse.json({ notifications: await db.getNotifications(50) });
 }

@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const restaurant = db.getRestaurant(id);
+  const restaurant = await db.getRestaurant(id);
 
   if (!restaurant) {
     return NextResponse.json({ error: 'Restaurant not found' }, { status: 404 });
@@ -24,7 +24,7 @@ export async function PATCH(
   const { id } = await params;
   try {
     const body = await req.json();
-    const restaurant = db.updateRestaurant(id, body);
+    const restaurant = await db.updateRestaurant(id, body);
 
     if (!restaurant) {
       return NextResponse.json({ error: 'Restaurant not found' }, { status: 404 });

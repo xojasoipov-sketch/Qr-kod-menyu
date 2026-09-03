@@ -17,7 +17,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Target status is required' }, { status: 400 });
     }
 
-    const updatedOrder = db.updateOrderStatus(
+    const updatedOrder = await db.updateOrderStatus(
       id,
       status as OrderStatus,
       changed_by || 'STAFF',

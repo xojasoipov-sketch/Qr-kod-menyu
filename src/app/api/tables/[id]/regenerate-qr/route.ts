@@ -9,7 +9,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const result = db.regenerateQrToken(id);
+    const result = await db.regenerateQrToken(id);
 
     if (!result) {
       return NextResponse.json({ error: 'Table not found' }, { status: 404 });

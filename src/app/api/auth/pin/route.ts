@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Kod 4 ta raqamdan iborat bo'lishi kerak." }, { status: 400 });
   }
 
-  const staff = db.getStaffByPin(pin);
+  const staff = await db.getStaffByPin(pin);
   if (!staff) {
     return NextResponse.json(
       { error: "Bunday kod topilmadi. Qaytadan urinib ko'ring." },

@@ -30,7 +30,7 @@ export async function POST(
   const isAdmin = session.role === 'ADMIN';
   const staff = { id: session.staffId || 'admin', name: session.name };
 
-  const table = db.getTable(id);
+  const table = await db.getTable(id);
   if (!table) {
     return NextResponse.json({ error: 'Stol topilmadi.' }, { status: 404 });
   }
@@ -39,7 +39,7 @@ export async function POST(
   // qolgan xatolar esa holat masalasi (409).
   const forbidden = !isAdmin && !!table.claimed_by && table.claimed_by !== staff.id;
 
-  const result = db.releaseTable(id, staff, isAdmin);
+  const result = await db.releaseTable(id, staff, isAdmin);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: forbidden ? 403 : 409 });
   }

@@ -6,6 +6,6 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const restaurantId = searchParams.get('restaurant_id') || 'rest-001';
-  const analytics = db.getAnalytics(restaurantId);
+  const analytics = await db.getAnalytics(restaurantId);
   return NextResponse.json({ analytics });
 }

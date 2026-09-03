@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const record = db.saveUpload(bytes, realType);
+  const record = await db.saveUpload(bytes, realType);
 
   return NextResponse.json(
     {

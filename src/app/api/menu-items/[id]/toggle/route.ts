@@ -9,7 +9,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const item = db.toggleItemAvailability(id);
+    const item = await db.toggleItemAvailability(id);
 
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });

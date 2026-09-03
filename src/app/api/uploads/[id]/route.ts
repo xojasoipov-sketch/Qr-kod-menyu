@@ -14,7 +14,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const upload = db.getUpload(id);
+  const upload = await db.getUpload(id);
 
   if (!upload) {
     return NextResponse.json({ error: 'Rasm topilmadi.' }, { status: 404 });

@@ -57,11 +57,11 @@ export async function POST(
     );
   }
 
-  if (!db.getOrder(id)) {
+  if (!(await db.getOrder(id))) {
     return NextResponse.json({ error: 'Buyurtma topilmadi.' }, { status: 404 });
   }
 
-  const result = db.rejectOrder(id, staff, reason);
+  const result = await db.rejectOrder(id, staff, reason);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 409 });
   }

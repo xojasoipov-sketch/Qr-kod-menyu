@@ -53,12 +53,12 @@ export async function POST(
     );
   }
 
-  const table = db.getTable(id);
+  const table = await db.getTable(id);
   if (!table) {
     return NextResponse.json({ error: 'Stol topilmadi.' }, { status: 404 });
   }
 
-  const target = db.staff.find((s) => s.id === toStaffId);
+  const target = await db.getStaffById(toStaffId);
   if (!target) {
     return NextResponse.json({ error: 'Ofitsiant topilmadi.' }, { status: 404 });
   }
@@ -66,7 +66,7 @@ export async function POST(
   // Stol so'rovchida bo'lmasa — ruxsat xatosi (403), qolgani holat xatosi (409).
   const forbidden = !isAdmin && table.claimed_by !== staff.id;
 
-  const result = db.transferTable(id, staff.id, { id: target.id, name: target.name }, isAdmin);
+  const result = await db.transferTable(id, staff.id, { id: target.id, name: target.name }, isAdmin);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: forbidden ? 403 : 409 });
   }

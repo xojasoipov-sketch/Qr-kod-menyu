@@ -29,11 +29,11 @@ export async function POST(
   const { id } = await params;
   const staff = { id: session.staffId || 'admin', name: session.name };
 
-  if (!db.getOrder(id)) {
+  if (!(await db.getOrder(id))) {
     return NextResponse.json({ error: 'Buyurtma topilmadi.' }, { status: 404 });
   }
 
-  const result = db.acceptOrder(id, staff);
+  const result = await db.acceptOrder(id, staff);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 409 });
   }

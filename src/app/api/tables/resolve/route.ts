@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'QR token is required' }, { status: 400 });
   }
 
-  const resolution = db.getTableByQrToken(token);
+  const resolution = await db.getTableByQrToken(token);
 
   if (!resolution) {
     return NextResponse.json({ error: 'Table not found' }, { status: 404 });

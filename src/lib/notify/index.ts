@@ -29,7 +29,9 @@
 import type { NotificationLog, Staff, UserRole } from '@/types/database';
 
 /** Chaqiruvchi (route handler) tomonidan uzatiladigan jurnalga yozish funksiyasi. */
-export type NotificationLogger = (entry: Omit<NotificationLog, 'id' | 'created_at'>) => NotificationLog;
+export type NotificationLogger = (
+  entry: Omit<NotificationLog, 'id' | 'created_at'>
+) => Promise<NotificationLog> | NotificationLog;
 
 /** `logEntry` berilmasa ishlatiladigan zaxira — faqat xotirada, bazaga yozmaydi. */
 const fallbackLogger: NotificationLogger = (entry) => ({
@@ -104,12 +106,12 @@ function describeError(err: unknown): string {
  * route handler orqali uzatiladi) ishlamay qolsa ham chaqiruvchi kod
  * to'xtamasligi uchun natija baribir qaytariladi.
  */
-function record(
+async function record(
   logEntry: NotificationLogger,
   entry: Omit<NotificationLog, 'id' | 'created_at'>
-): NotificationLog {
+): Promise<NotificationLog> {
   try {
-    return logEntry(entry);
+    return await logEntry(entry);
   } catch {
     return fallbackLogger(entry);
   }
@@ -124,7 +126,7 @@ function record(
  * bo'lsa ham taklif "yo'qolib ketmasligi" kerak — u serverda ko'rinadi va
  * jurnalda saqlanadi.
  */
-function deliverConsole(input: NotifyInput, logEntry: NotificationLogger): NotificationLog {
+async function deliverConsole(input: NotifyInput, logEntry: NotificationLogger): Promise<NotificationLog> {
   const to = input.email || input.phone || 'server-console';
   try {
     console.info(`[BILDIRISHNOMA] ${to} | ${input.subject}\n${input.body}`);
@@ -398,7 +400,7 @@ export async function sendNotification(
     body: input?.body?.trim() || '',
   };
 
-  const consoleLog = deliverConsole(normalized, logEntry);
+  const consoleLog = await deliverConsole(normalized, logEntry);
 
   try {
     const rest = await Promise.all([
@@ -412,7 +414,7 @@ export async function sendNotification(
     // lekin kafolat uchun: hech qachon otmaymiz.
     return [
       consoleLog,
-      record(logEntry, {
+      await record(logEntry, {
         channel: 'console',
         to: normalized.email || normalized.phone || 'server-console',
         subject: normalized.subject,

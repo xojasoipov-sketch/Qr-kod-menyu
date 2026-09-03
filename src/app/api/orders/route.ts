@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  let orders = db.getOrdersByRestaurant(restaurantId);
+  let orders = await db.getOrdersByRestaurant(restaurantId);
   if (branchId) {
     orders = orders.filter((o) => o.branch_id === branchId);
   }
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newOrder = db.createOrder({
+    const newOrder = await db.createOrder({
       table_id,
       customer_notes,
       items,
