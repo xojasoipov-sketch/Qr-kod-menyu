@@ -35,13 +35,13 @@ export async function POST(
     return NextResponse.json({ error: 'Stol topilmadi.' }, { status: 404 });
   }
 
-  // Begona stolni bo'shatishga urinish — bu ruxsat masalasi (403),
-  // qolgan xatolar esa holat masalasi (409).
-  const forbidden = !isAdmin && !!table.claimed_by && table.claimed_by !== staff.id;
-
   const result = await db.releaseTable(id, staff, isAdmin);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: forbidden ? 403 : 409 });
+    // Begona stolni bo'shatishga urinish — bu ruxsat masalasi (403), qolgan xatolar esa holat
+    // masalasi (409). `forbidden` qulflangan tranzaksiya ichida, aynan shu xato yuzaga kelgan
+    // paytda aniqlanadi (route'dagi oldindan o'qishdan emas) — shu sabab boshqa so'rov stol
+    // egasini o'zgartirib ulgurgan taqdirda ham to'g'ri status kodi qaytadi.
+    return NextResponse.json({ error: result.error }, { status: result.forbidden ? 403 : 409 });
   }
 
   return NextResponse.json({ success: true, table: result.table });

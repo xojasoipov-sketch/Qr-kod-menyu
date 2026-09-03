@@ -22,10 +22,15 @@ import { eventBus, RealtimeEventType } from '../realtime/event-bus';
 import { nanoid } from 'nanoid';
 import { query, withTransaction } from './pg';
 
-/** Stolga oid amallar natijasi — istisno tashlamaydi, doim natija qaytaradi. */
+/**
+ * Stolga oid amallar natijasi — istisno tashlamaydi, doim natija qaytaradi.
+ * Muvaffaqiyatsizlikda `forbidden` — bu ruxsat (403) xatosimi yoki holat (409) xatosimi ekanini
+ * chaqiruvchi (API route) alohida, eskirib qolishi mumkin bo'lgan oldindan o'qishsiz aniqlay olishi
+ * uchun — qulflangan tranzaksiya ichida, xato aniq shu yerda yuzaga kelgan paytda belgilanadi.
+ */
 export type TableActionResult =
   | { ok: true; table: Table }
-  | { ok: false; error: string };
+  | { ok: false; error: string; forbidden?: boolean };
 
 /** Buyurtmaga oid amallar natijasi — istisno tashlamaydi, doim natija qaytaradi. */
 export type OrderActionResult =
@@ -748,7 +753,7 @@ export const db = {
   ): Promise<TableActionResult> {
     type TxResult =
       | { ok: true; table: Table; restaurantId: string; previousOwner: { id: string; name: string } }
-      | { ok: false; error: string };
+      | { ok: false; error: string; forbidden?: boolean };
 
     const result = await withTransaction<TxResult>(async (client) => {
       const res = await client.query<TableRow>('SELECT * FROM rest_tables WHERE id = $1 FOR UPDATE', [
@@ -763,6 +768,7 @@ export const db = {
         const owner = row.claimed_by_name || 'boshqa ofitsiant';
         return {
           ok: false,
+          forbidden: true,
           error: `Bu stol ${owner} ga biriktirilgan. Uni faqat o'sha ofitsiant yoki administrator bo'shata oladi.`,
         };
       }
@@ -841,7 +847,7 @@ export const db = {
           toStaffName: string;
           previousOwner: { id: string; name: string };
         }
-      | { ok: false; error: string };
+      | { ok: false; error: string; forbidden?: boolean };
 
     const result = await withTransaction<TxResult>(async (client) => {
       const res = await client.query<TableRow>('SELECT * FROM rest_tables WHERE id = $1 FOR UPDATE', [
@@ -881,6 +887,7 @@ export const db = {
           const owner = row.claimed_by_name || 'boshqa ofitsiant';
           return {
             ok: false,
+            forbidden: true,
             error: `Bu stol ${owner} ga biriktirilgan. Uni faqat o'sha ofitsiant yoki administrator uzata oladi.`,
           };
         }
@@ -1058,8 +1065,14 @@ export const db = {
       );
       return mapStaff(res.rows[0]);
     } catch (err: unknown) {
-      // Pre-check bilan insert orasidagi poyga holatiga qarshi backstop.
+      // Pre-check bilan insert orasidagi poyga holatiga qarshi backstop — qaysi ustun to'qnashgani
+      // (constraint nomi orqali) aniqlanadi, aks holda email to'qnashuvi ham noto'g'ri "PIN band"
+      // xabari bilan qaytardi.
       if (isUniqueViolation(err)) {
+        const constraint = (err as { constraint?: string }).constraint || '';
+        if (constraint.includes('email')) {
+          throw new Error('Bu elektron pochta bilan xodim allaqachon mavjud.');
+        }
         throw new Error('Bu PIN kod allaqachon band. Boshqa kod tanlang.');
       }
       throw err;
@@ -1112,6 +1125,12 @@ export const db = {
   async createCategory(data: Omit<MenuCategory, 'id' | 'created_at' | 'updated_at'>): Promise<MenuCategory> {
     const id = `cat-${nanoid(8)}`;
     const now = new Date().toISOString();
+    // slug/sort_order/is_active NOT NULL ustunlar — jadvalning o'zida DEFAULT bo'lsa ham, INSERT
+    // ularni aniq qiymat (shu jumladan undefined->null) bilan yozadi va DEFAULT'ni chetlab
+    // o'tadi. Shu sabab bu yerda ham xuddi shunday standart qiymatlar qo'llanadi (admin panel
+    // formasi ularni allaqachon to'ldirib yuboradi, lekin API'ni to'g'ridan-to'g'ri chaqirgan
+    // boshqa chaqiruvchi uchun ham ishlashi kerak).
+    const slug = data.slug || data.name.toLowerCase().trim().replace(/\s+/g, '-');
     const res = await query<CategoryRow>(
       `INSERT INTO rest_categories (id, restaurant_id, branch_id, name, slug, icon, image_url, sort_order, is_active, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING *`,
@@ -1120,11 +1139,11 @@ export const db = {
         data.restaurant_id,
         data.branch_id ?? null,
         data.name,
-        data.slug,
+        slug,
         data.icon ?? null,
         data.image_url ?? null,
-        data.sort_order,
-        data.is_active,
+        data.sort_order ?? 0,
+        data.is_active ?? true,
         now,
       ]
     );
@@ -1166,14 +1185,17 @@ export const db = {
         data.branch_id ?? null,
         data.category_id,
         data.name,
-        data.description,
+        // NOT NULL ustunlar (description/image_url/spicy_level/preparation_time/is_available)
+        // jadvalda DEFAULT'ga ega, lekin INSERT ularni aniq qiymat bilan yozgani uchun bu yerda
+        // ham mos standart qiymatlar qo'llanadi — createCategory'dagi izohga qarang.
+        data.description ?? '',
         data.price,
-        data.image_url,
+        data.image_url ?? '',
         JSON.stringify(data.ingredients ?? []),
         JSON.stringify(data.dietary_flags ?? null),
-        data.spicy_level,
-        data.preparation_time,
-        data.is_available,
+        data.spicy_level ?? 0,
+        data.preparation_time ?? 0,
+        data.is_available ?? true,
         data.is_featured ?? null,
         JSON.stringify(data.option_groups ?? null),
         now,
@@ -1202,9 +1224,26 @@ export const db = {
   },
 
   async toggleItemAvailability(id: string): Promise<MenuItem | null> {
-    const item = await db.getMenuItem(id);
-    if (!item) return null;
-    return db.updateMenuItem(id, { is_available: !item.is_available });
+    // Bitta atomik UPDATE — avval o'qib keyin yozish (read-then-write) emas, aks holda ikki
+    // so'rov bir vaqtda kelsa (masalan ikki marta tez bosilsa), ikkalasi ham eski qiymatni o'qib,
+    // bir xil natijaga yozib qo'yishi mumkin va bitta almashtirish yo'qolib ketadi.
+    const now = new Date().toISOString();
+    const res = await query<MenuItemRow>(
+      'UPDATE rest_menu_items SET is_available = NOT is_available, updated_at = $2 WHERE id = $1 RETURNING *',
+      [id, now]
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    const updated = mapMenuItem(row);
+
+    eventBus.emit({
+      type: 'MENU_UPDATED',
+      timestamp: now,
+      restaurant_id: updated.restaurant_id,
+      data: { item: updated },
+    });
+
+    return updated;
   },
 
   // --- ORDERS (WITH SERVER-SIDE SECURITY & PRICE VERIFICATION) ---
@@ -1219,9 +1258,14 @@ export const db = {
     }[];
   }): Promise<Order> {
     const order = await withTransaction<Order>(async (client) => {
-      const tableRes = await client.query<TableRow>('SELECT * FROM rest_tables WHERE id = $1', [
-        params.table_id,
-      ]);
+      // FOR UPDATE: releaseTable ham xuddi shu qatorni qulflaydi — shu orqali ikkalasi bir stolda
+      // bir vaqtda ishlasa (masalan mijoz buyurtma yuborayotganda ofitsiant stolni bo'shatsa),
+      // ular navbat bilan ishlaydi, "bo'shatilgan stolda egasiz buyurtma qolib ketishi" mumkin
+      // bo'lgan poyga holati oldini olinadi.
+      const tableRes = await client.query<TableRow>(
+        'SELECT * FROM rest_tables WHERE id = $1 FOR UPDATE',
+        [params.table_id]
+      );
       const tableRow = tableRes.rows[0];
       if (!tableRow || !tableRow.is_active) {
         throw new Error('Ushbu stol hozirda faol emas.');
@@ -1736,11 +1780,23 @@ export const db = {
       (o) => o.status === 'pending' || o.status === 'confirmed' || o.status === 'preparing'
     ).length;
 
+    // Har bir taom uchun alohida so'rov (N+1) o'rniga — kerakli menu_item_id'larni bitta so'rovda
+    // oldindan olib, JS xaritasida qidiramiz.
+    const uniqueMenuItemIds = [
+      ...new Set(validOrders.flatMap((o) => o.items.map((i) => i.menu_item_id))),
+    ];
+    const menuItemsRes = uniqueMenuItemIds.length
+      ? await query<MenuItemRow>('SELECT * FROM rest_menu_items WHERE id = ANY($1::text[])', [
+          uniqueMenuItemIds,
+        ])
+      : { rows: [] as MenuItemRow[] };
+    const menuItemById = new Map(menuItemsRes.rows.map((r) => [r.id, mapMenuItem(r)]));
+
     const itemSales: Record<string, PopularDish> = {};
     for (const order of validOrders) {
       for (const item of order.items) {
         if (!itemSales[item.name_snapshot]) {
-          const menuItem = await db.getMenuItem(item.menu_item_id);
+          const menuItem = menuItemById.get(item.menu_item_id);
           itemSales[item.name_snapshot] = {
             name: item.name_snapshot,
             quantity: 0,

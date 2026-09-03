@@ -63,12 +63,12 @@ export async function POST(
     return NextResponse.json({ error: 'Ofitsiant topilmadi.' }, { status: 404 });
   }
 
-  // Stol so'rovchida bo'lmasa — ruxsat xatosi (403), qolgani holat xatosi (409).
-  const forbidden = !isAdmin && table.claimed_by !== staff.id;
-
   const result = await db.transferTable(id, staff.id, { id: target.id, name: target.name }, isAdmin);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: forbidden ? 403 : 409 });
+    // Stol so'rovchida bo'lmasa — ruxsat xatosi (403), qolgani holat xatosi (409). `forbidden`
+    // qulflangan tranzaksiya ichida, aynan shu xato yuzaga kelgan paytda aniqlanadi — oldindan
+    // o'qishdan emas, shu sabab boshqa so'rov stol egasini shu oraliqda o'zgartirsa ham to'g'ri.
+    return NextResponse.json({ error: result.error }, { status: result.forbidden ? 403 : 409 });
   }
 
   return NextResponse.json({ success: true, table: result.table });
