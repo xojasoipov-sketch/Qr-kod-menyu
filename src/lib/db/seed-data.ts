@@ -60,101 +60,72 @@ export const INITIAL_BRANCHES: Branch[] = [
 
 export const INITIAL_TABLES: Table[] = [
   // ==========================================
-  // ASOSIY ZAL — 1-20 stol
+  // 30 TA STOL — 1-stol ... 30-stol
+  // QR tokenlar barqaror va o'qishga qulay: muhtasham-t1 ... muhtasham-t30
   // ==========================================
+
+  // --- Asosiy Zal (1-14 stol) ---
   { id: 'tbl-001', branch_id: 'branch-001', name: '1-stol', number: 1, qr_token: 'muhtasham-t1', capacity: 2, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-002', branch_id: 'branch-001', name: '2-stol', number: 2, qr_token: 'muhtasham-t2', capacity: 2, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-003', branch_id: 'branch-001', name: '3-stol', number: 3, qr_token: 'muhtasham-t3', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-004', branch_id: 'branch-001', name: '4-stol', number: 4, qr_token: 'a8F3kP9x', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-004', branch_id: 'branch-001', name: '4-stol', number: 4, qr_token: 'muhtasham-t4', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-005', branch_id: 'branch-001', name: '5-stol', number: 5, qr_token: 'muhtasham-t5', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-006', branch_id: 'branch-001', name: '6-stol', number: 6, qr_token: 'muhtasham-t6', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-007', branch_id: 'branch-001', name: '7-stol', number: 7, qr_token: 'muhtasham-t7', capacity: 6, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-008', branch_id: 'branch-001', name: '8-stol', number: 8, qr_token: 'muhtasham-t8', capacity: 6, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-009', branch_id: 'branch-001', name: '9-stol', number: 9, qr_token: 'muhtasham-t9', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-010', branch_id: 'branch-001', name: '10-stol', number: 10, qr_token: 'muhtasham-t10', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-011', branch_id: 'branch-001', name: '11-stol', number: 11, qr_token: 'muhtasham-t11', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-011', branch_id: 'branch-001', name: '11-stol', number: 11, qr_token: 'muhtasham-t11', capacity: 2, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-012', branch_id: 'branch-001', name: '12-stol', number: 12, qr_token: 'muhtasham-t12', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-013', branch_id: 'branch-001', name: '13-stol', number: 13, qr_token: 'muhtasham-t13', capacity: 6, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-014', branch_id: 'branch-001', name: '14-stol', number: 14, qr_token: 'muhtasham-t14', capacity: 6, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-015', branch_id: 'branch-001', name: '15-stol', number: 15, qr_token: 'muhtasham-t15', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-016', branch_id: 'branch-001', name: '16-stol', number: 16, qr_token: 'muhtasham-t16', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-017', branch_id: 'branch-001', name: '17-stol', number: 17, qr_token: 'muhtasham-t17', capacity: 2, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-018', branch_id: 'branch-001', name: '18-stol', number: 18, qr_token: 'muhtasham-t18', capacity: 2, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-019', branch_id: 'branch-001', name: '19-stol', number: 19, qr_token: 'muhtasham-t19', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-020', branch_id: 'branch-001', name: '20-stol', number: 20, qr_token: 'muhtasham-t20', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 
-  // ==========================================
-  // YOZGI TERRASA — 21-30 stol
-  // ==========================================
+  // --- Deraza Yonida (15-20 stol) ---
+  { id: 'tbl-015', branch_id: 'branch-001', name: '15-stol', number: 15, qr_token: 'muhtasham-t15', capacity: 2, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-016', branch_id: 'branch-001', name: '16-stol', number: 16, qr_token: 'muhtasham-t16', capacity: 2, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-017', branch_id: 'branch-001', name: '17-stol', number: 17, qr_token: 'muhtasham-t17', capacity: 4, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-018', branch_id: 'branch-001', name: '18-stol', number: 18, qr_token: 'muhtasham-t18', capacity: 4, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-019', branch_id: 'branch-001', name: '19-stol', number: 19, qr_token: 'muhtasham-t19', capacity: 4, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-020', branch_id: 'branch-001', name: '20-stol', number: 20, qr_token: 'muhtasham-t20', capacity: 6, zone: 'Deraza Yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+
+  // --- Yozgi Terrasa (21-26 stol) ---
   { id: 'tbl-021', branch_id: 'branch-001', name: '21-stol', number: 21, qr_token: 'muhtasham-t21', capacity: 2, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-022', branch_id: 'branch-001', name: '22-stol', number: 22, qr_token: 'muhtasham-t22', capacity: 2, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-023', branch_id: 'branch-001', name: '23-stol', number: 23, qr_token: 'muhtasham-t23', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-023', branch_id: 'branch-001', name: '23-stol', number: 23, qr_token: 'muhtasham-t23', capacity: 2, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-024', branch_id: 'branch-001', name: '24-stol', number: 24, qr_token: 'muhtasham-t24', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
   { id: 'tbl-025', branch_id: 'branch-001', name: '25-stol', number: 25, qr_token: 'muhtasham-t25', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-026', branch_id: 'branch-001', name: '26-stol', number: 26, qr_token: 'muhtasham-t26', capacity: 6, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-027', branch_id: 'branch-001', name: '27-stol', number: 27, qr_token: 'muhtasham-t27', capacity: 6, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-028', branch_id: 'branch-001', name: '28-stol', number: 28, qr_token: 'muhtasham-t28', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-029', branch_id: 'branch-001', name: '29-stol', number: 29, qr_token: 'muhtasham-t29', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-030', branch_id: 'branch-001', name: '30-stol', number: 30, qr_token: 'muhtasham-t30', capacity: 6, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-026', branch_id: 'branch-001', name: '26-stol', number: 26, qr_token: 'muhtasham-t26', capacity: 4, zone: 'Yozgi Terrasa', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+
+  // --- VIP Sekciya (27-30 stol) ---
+  { id: 'tbl-027', branch_id: 'branch-001', name: '27-stol', number: 27, qr_token: 'muhtasham-t27', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-028', branch_id: 'branch-001', name: '28-stol', number: 28, qr_token: 'muhtasham-t28', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-029', branch_id: 'branch-001', name: '29-stol', number: 29, qr_token: 'muhtasham-t29', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tbl-030', branch_id: 'branch-001', name: '30-stol', number: 30, qr_token: 'muhtasham-t30', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 
   // ==========================================
-  // BAR ZONASI — 31-38 stol
+  // 20 TA ALOHIDA XONA — 1-Xona ... 20-Xona
+  // QR tokenlar: xona-1 ... xona-20
   // ==========================================
-  { id: 'tbl-031', branch_id: 'branch-001', name: '31-stol', number: 31, qr_token: 'muhtasham-t31', capacity: 2, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-032', branch_id: 'branch-001', name: '32-stol', number: 32, qr_token: 'muhtasham-t32', capacity: 2, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-033', branch_id: 'branch-001', name: '33-stol', number: 33, qr_token: 'muhtasham-t33', capacity: 2, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-034', branch_id: 'branch-001', name: '34-stol', number: 34, qr_token: 'muhtasham-t34', capacity: 4, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-035', branch_id: 'branch-001', name: '35-stol', number: 35, qr_token: 'muhtasham-t35', capacity: 4, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-036', branch_id: 'branch-001', name: '36-stol', number: 36, qr_token: 'muhtasham-t36', capacity: 4, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-037', branch_id: 'branch-001', name: '37-stol', number: 37, qr_token: 'muhtasham-t37', capacity: 4, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-038', branch_id: 'branch-001', name: '38-stol', number: 38, qr_token: 'muhtasham-t38', capacity: 6, zone: 'Bar Zonasi', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-
-  // ==========================================
-  // DERAZA YONIDA — 39-44 stol
-  // ==========================================
-  { id: 'tbl-039', branch_id: 'branch-001', name: '39-stol', number: 39, qr_token: 'muhtasham-t39', capacity: 2, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-040', branch_id: 'branch-001', name: '40-stol', number: 40, qr_token: 'muhtasham-t40', capacity: 2, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-041', branch_id: 'branch-001', name: '41-stol', number: 41, qr_token: 'muhtasham-t41', capacity: 4, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-042', branch_id: 'branch-001', name: '42-stol', number: 42, qr_token: 'muhtasham-t42', capacity: 4, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-043', branch_id: 'branch-001', name: '43-stol', number: 43, qr_token: 'muhtasham-t43', capacity: 4, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-044', branch_id: 'branch-001', name: '44-stol', number: 44, qr_token: 'muhtasham-t44', capacity: 6, zone: 'Deraza yonida', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-
-  // ==========================================
-  // VIP SEKCIYASI — 45-50 stol
-  // ==========================================
-  { id: 'tbl-045', branch_id: 'branch-001', name: '45-stol (VIP)', number: 45, qr_token: 'muhtasham-t45', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-046', branch_id: 'branch-001', name: '46-stol (VIP)', number: 46, qr_token: 'muhtasham-t46', capacity: 6, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-047', branch_id: 'branch-001', name: '47-stol (VIP)', number: 47, qr_token: 'muhtasham-t47', capacity: 8, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-048', branch_id: 'branch-001', name: '48-stol (VIP)', number: 48, qr_token: 'muhtasham-t48', capacity: 8, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-049', branch_id: 'branch-001', name: '49-stol (VIP)', number: 49, qr_token: 'muhtasham-t49', capacity: 10, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'tbl-050', branch_id: 'branch-001', name: '50-stol (VIP)', number: 50, qr_token: 'k9F3PqA7xL', capacity: 10, zone: 'VIP Sekciya', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-
-  // ==========================================
-  // ALOHIDA XONALAR — 20 ta maxsus xona
-  // ==========================================
-  { id: 'room-001', branch_id: 'branch-001', name: 'Oltin Xona №1', number: 101, qr_token: 'xona-oltin-1', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-002', branch_id: 'branch-001', name: 'Oltin Xona №2', number: 102, qr_token: 'xona-oltin-2', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-003', branch_id: 'branch-001', name: 'Kumush Xona №3', number: 103, qr_token: 'xona-kumush-3', capacity: 10, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-004', branch_id: 'branch-001', name: 'Kumush Xona №4', number: 104, qr_token: 'xona-kumush-4', capacity: 10, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-005', branch_id: 'branch-001', name: 'Shohona Ziyofat Xonasi №5', number: 105, qr_token: 'xona-shohona-5', capacity: 12, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-006', branch_id: 'branch-001', name: 'Shohona Ziyofat Xonasi №6', number: 106, qr_token: 'xona-shohona-6', capacity: 12, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-007', branch_id: 'branch-001', name: 'Lola Xonasi №7', number: 107, qr_token: 'xona-lola-7', capacity: 15, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-008', branch_id: 'branch-001', name: 'Lola Xonasi №8', number: 108, qr_token: 'xona-lola-8', capacity: 15, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-009', branch_id: 'branch-001', name: 'Yasmin Xonasi №9', number: 109, qr_token: 'xona-yasmin-9', capacity: 20, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-010', branch_id: 'branch-001', name: 'Yasmin Xonasi №10', number: 110, qr_token: 'xona-yasmin-10', capacity: 20, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-011', branch_id: 'branch-001', name: 'Sarvar VIP Xona №11', number: 111, qr_token: 'xona-sarvar-11', capacity: 6, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-012', branch_id: 'branch-001', name: 'Sarvar VIP Xona №12', number: 112, qr_token: 'xona-sarvar-12', capacity: 6, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-013', branch_id: 'branch-001', name: 'To\'y Boshqaruv Xonasi №13', number: 113, qr_token: 'xona-toy-13', capacity: 30, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-014', branch_id: 'branch-001', name: 'To\'y Boshqaruv Xonasi №14', number: 114, qr_token: 'xona-toy-14', capacity: 30, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-015', branch_id: 'branch-001', name: 'Ko\'k Xona №15', number: 115, qr_token: 'xona-kok-15', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-016', branch_id: 'branch-001', name: 'Ko\'k Xona №16', number: 116, qr_token: 'xona-kok-16', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-017', branch_id: 'branch-001', name: 'Prezident Xonasi №17', number: 117, qr_token: 'xona-prezident-17', capacity: 10, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-018', branch_id: 'branch-001', name: 'Muhtasham Suite №18', number: 118, qr_token: 'xona-suite-18', capacity: 12, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-019', branch_id: 'branch-001', name: 'Oilaviy Xona №19', number: 119, qr_token: 'xona-oila-19', capacity: 15, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-  { id: 'room-020', branch_id: 'branch-001', name: 'Muhtasham Grand Zali №20', number: 120, qr_token: 'xona-grand-20', capacity: 50, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-
-  // Alias for backward compatibility
-  { id: 'tbl-002-alias', branch_id: 'branch-001', name: '12-stol', number: 12, qr_token: 'flavoria-t12', capacity: 4, zone: 'Asosiy Zal', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-001', branch_id: 'branch-001', name: '1-Xona', number: 1, qr_token: 'xona-1', capacity: 6, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-002', branch_id: 'branch-001', name: '2-Xona', number: 2, qr_token: 'xona-2', capacity: 6, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-003', branch_id: 'branch-001', name: '3-Xona', number: 3, qr_token: 'xona-3', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-004', branch_id: 'branch-001', name: '4-Xona', number: 4, qr_token: 'xona-4', capacity: 8, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-005', branch_id: 'branch-001', name: '5-Xona', number: 5, qr_token: 'xona-5', capacity: 10, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-006', branch_id: 'branch-001', name: '6-Xona', number: 6, qr_token: 'xona-6', capacity: 10, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-007', branch_id: 'branch-001', name: '7-Xona', number: 7, qr_token: 'xona-7', capacity: 12, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-008', branch_id: 'branch-001', name: '8-Xona', number: 8, qr_token: 'xona-8', capacity: 12, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-009', branch_id: 'branch-001', name: '9-Xona', number: 9, qr_token: 'xona-9', capacity: 14, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-010', branch_id: 'branch-001', name: '10-Xona', number: 10, qr_token: 'xona-10', capacity: 15, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-011', branch_id: 'branch-001', name: '11-Xona', number: 11, qr_token: 'xona-11', capacity: 16, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-012', branch_id: 'branch-001', name: '12-Xona', number: 12, qr_token: 'xona-12', capacity: 18, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-013', branch_id: 'branch-001', name: '13-Xona', number: 13, qr_token: 'xona-13', capacity: 20, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-014', branch_id: 'branch-001', name: '14-Xona', number: 14, qr_token: 'xona-14', capacity: 20, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-015', branch_id: 'branch-001', name: '15-Xona', number: 15, qr_token: 'xona-15', capacity: 24, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-016', branch_id: 'branch-001', name: '16-Xona', number: 16, qr_token: 'xona-16', capacity: 25, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-017', branch_id: 'branch-001', name: '17-Xona', number: 17, qr_token: 'xona-17', capacity: 30, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-018', branch_id: 'branch-001', name: '18-Xona', number: 18, qr_token: 'xona-18', capacity: 35, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-019', branch_id: 'branch-001', name: '19-Xona', number: 19, qr_token: 'xona-19', capacity: 40, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'room-020', branch_id: 'branch-001', name: '20-Xona', number: 20, qr_token: 'xona-20', capacity: 50, zone: 'Alohida Xonalar', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 
 export const INITIAL_STAFF: Staff[] = [
@@ -166,6 +137,8 @@ export const INITIAL_STAFF: Staff[] = [
     name: 'Sanjar Rahimov',
     email: 'rahimov@muhtasham.uz',
     role: 'RESTAURANT_OWNER',
+    phone: '+998 90 111 11 11',
+    pin: '1111',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -178,6 +151,8 @@ export const INITIAL_STAFF: Staff[] = [
     name: 'Bosh Oshpaz Bobur',
     email: 'oshxona@muhtasham.uz',
     role: 'KITCHEN',
+    phone: '+998 93 333 33 33',
+    pin: '3333',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -190,6 +165,8 @@ export const INITIAL_STAFF: Staff[] = [
     name: 'Jasur Saidov',
     email: 'ofitsiant@muhtasham.uz',
     role: 'WAITER',
+    phone: '+998 91 222 22 22',
+    pin: '2222',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -202,6 +179,22 @@ export const INITIAL_STAFF: Staff[] = [
     name: 'Madina Karimova',
     email: 'menejer@muhtasham.uz',
     role: 'MANAGER',
+    phone: '+998 94 444 44 44',
+    pin: '4444',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'staff-005',
+    restaurant_id: 'rest-001',
+    branch_id: 'branch-001',
+    user_id: 'usr-waiter-2',
+    name: 'Dilnoza Yo\'ldosheva',
+    email: 'ofitsiant2@muhtasham.uz',
+    role: 'WAITER',
+    phone: '+998 97 555 55 55',
+    pin: '5555',
     is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -641,7 +634,7 @@ export const INITIAL_ORDERS: Order[] = [
     id: 'ord-1001',
     restaurant_id: 'rest-001',
     branch_id: 'branch-001',
-    table_id: 'tbl-002',
+    table_id: 'tbl-012',
     order_number: '#1042',
     status: 'preparing',
     subtotal: 140000,
@@ -713,9 +706,9 @@ export const INITIAL_WAITER_CALLS: WaiterCall[] = [
     id: 'wc-001',
     restaurant_id: 'rest-001',
     branch_id: 'branch-001',
-    table_id: 'tbl-002',
+    table_id: 'tbl-012',
     table_number: 12,
-    table_name: '12-stol (Yozgi Terrasa)',
+    table_name: '12-stol (Asosiy Zal)',
     status: 'PENDING',
     call_type: 'SERVICE',
     created_at: new Date(Date.now() - 2 * 60000).toISOString(),

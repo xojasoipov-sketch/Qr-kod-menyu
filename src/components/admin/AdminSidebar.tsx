@@ -1,19 +1,22 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  ShoppingBag, 
-  UtensilsCrossed, 
-  FolderTree, 
-  QrCode, 
-  Users, 
-  BarChart3, 
-  Settings, 
+import { usePathname, useRouter } from 'next/navigation';
+import {
+  LayoutDashboard,
+  ShoppingBag,
+  UtensilsCrossed,
+  FolderTree,
+  QrCode,
+  Users,
+  BarChart3,
+  Settings,
   ExternalLink,
   ChefHat,
-  BellRing
+  BellRing,
+  ScanLine,
+  LogOut
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -22,6 +25,7 @@ const NAV_ITEMS = [
   { label: 'Menyu & Taomlar', href: '/admin/menu', icon: <UtensilsCrossed className="w-4 h-4" /> },
   { label: 'Kategoriyalar', href: '/admin/categories', icon: <FolderTree className="w-4 h-4" /> },
   { label: 'Stollar & QR Kodlar', href: '/admin/tables', icon: <QrCode className="w-4 h-4" /> },
+  { label: 'QR Kodlar Varaqasi', href: '/admin/qr-codes', icon: <ScanLine className="w-4 h-4" /> },
   { label: 'Xodimlar & Rollar', href: '/admin/staff', icon: <Users className="w-4 h-4" /> },
   { label: 'Daromad & Tahlil', href: '/admin/analytics', icon: <BarChart3 className="w-4 h-4" /> },
   { label: 'Restoran Sozlamalari', href: '/admin/settings', icon: <Settings className="w-4 h-4" /> },
@@ -29,6 +33,19 @@ const NAV_ITEMS = [
 
 export default function AdminSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err: unknown) {
+      console.error("Tizimdan chiqishda xatolik:", err);
+    } finally {
+      router.push('/login');
+    }
+  };
 
   return (
     <aside className="w-64 bg-[#110F0D] border-r border-surface-border flex flex-col justify-between flex-shrink-0 min-h-screen">
@@ -113,6 +130,15 @@ export default function AdminSidebar() {
           </div>
           <ExternalLink className="w-3 h-3 text-gold-400/60 group-hover:text-gold-300" />
         </Link>
+
+        <button
+          onClick={() => void handleSignOut()}
+          disabled={isSigningOut}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-100 text-stone-400 hover:text-stone-100 text-xs border border-surface-border hover:border-red-400/30 transition-colors disabled:opacity-50"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>{isSigningOut ? 'Chiqilmoqda…' : 'Chiqish'}</span>
+        </button>
       </div>
     </aside>
   );

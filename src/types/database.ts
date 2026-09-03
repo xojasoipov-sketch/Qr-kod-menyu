@@ -63,6 +63,9 @@ export interface Staff {
   name: string;
   email: string;
   role: UserRole;
+  phone?: string;
+  /** 4-digit staff login code used by the PIN login screen. */
+  pin?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -191,4 +194,38 @@ export interface TableResolution {
   table: Table;
   categories: MenuCategory[];
   items: MenuItem[];
+}
+
+// ==========================================
+// SESSIYA / AUTENTIFIKATSIYA
+// ==========================================
+
+export type SessionRole = 'ADMIN' | 'WAITER' | 'KITCHEN';
+
+// ==========================================
+// FAYL YUKLASH (UPLOAD)
+// ==========================================
+
+export interface UploadRecord {
+  id: string;
+  content_type: string;
+  size: number;
+  created_at: string;
+}
+
+// ==========================================
+// BILDIRISHNOMALAR (NOTIFICATIONS)
+// ==========================================
+
+export type NotificationChannel = 'console' | 'email' | 'sms' | 'telegram';
+
+export interface NotificationLog {
+  id: string;
+  channel: NotificationChannel;
+  to: string;
+  subject: string;
+  body: string;
+  status: 'sent' | 'failed' | 'skipped';
+  error?: string;
+  created_at: string;
 }

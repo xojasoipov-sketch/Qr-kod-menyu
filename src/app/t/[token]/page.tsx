@@ -1,7 +1,9 @@
 'use client';
 
-import { use, useEffect, useState, useMemo } from 'react';
+import { use, useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { resolveTable } from '@/lib/api';
+import { useRealtime } from '@/lib/use-realtime';
+import type { RealtimePayload } from '@/lib/realtime/event-bus';
 import { CartItem, MenuItem, SelectedOption, TableResolution } from '@/types/database';
 import CustomerHeader from '@/components/customer/CustomerHeader';
 import CategoryNav from '@/components/customer/CategoryNav';
@@ -13,6 +15,10 @@ import { AlertCircle, Utensils } from 'lucide-react';
 import Link from 'next/link';
 
 type ResolutionStatus = 'loading' | 'ready' | 'not-found';
+
+// An admin toggling a few dishes in quick succession should only cost the
+// diner's browser one re-fetch, not one per click.
+const MENU_REFRESH_DEBOUNCE_MS = 800;
 
 export default function CustomerMenuPage({
   params,
@@ -60,6 +66,76 @@ export default function CustomerMenuPage({
     });
     return counts;
   }, [items]);
+
+  // Silent live refresh: when the kitchen 86's a dish or an admin edits the
+  // menu, an already-open table should catch up on its own — never by
+  // resetting the diner's scroll, category, cart or an open dish modal.
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshResolution = useCallback(() => {
+    resolveTable(token)
+      .then((data) => {
+        setResolution(data);
+        // Keep an open dish modal pointed at fresh data (price/availability)
+        // instead of a stale snapshot — but never close it on our own.
+        setSelectedItemForModal((prev) => {
+          if (!prev) return prev;
+          return data.items.find((i) => i.id === prev.id) ?? prev;
+        });
+      })
+      .catch((err: unknown) => {
+        // A background refresh failing is not the diner's problem to see —
+        // keep showing the last known-good menu instead of tearing it down.
+        console.error('Failed to refresh menu', err);
+      });
+  }, [token]);
+
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      refreshResolution();
+    }, MENU_REFRESH_DEBOUNCE_MS);
+  }, [refreshResolution]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleRealtimeEvent = useCallback(
+    (payload: RealtimePayload) => {
+      if (payload.type === 'MENU_UPDATED' || payload.type === 'TABLE_UPDATED') {
+        scheduleRefresh();
+      }
+    },
+    [scheduleRefresh]
+  );
+
+  // Filters stay empty until the token has resolved once — the hook itself
+  // handles the connect/reconnect lifecycle either way.
+  const { connected: isLive } = useRealtime(
+    { restaurantId: resolution?.restaurant.id, branchId: resolution?.branch.id },
+    handleRealtimeEvent
+  );
+
+  // Dishes sitting in the diner's cart that just went unavailable — never
+  // dropped silently, only flagged so the diner can decide what to do.
+  const unavailableCartNames = useMemo(() => {
+    const names = new Set<string>();
+    cart.forEach((ci) => {
+      const latest = items.find((i) => i.id === ci.item.id);
+      if (!latest || !latest.is_available) {
+        names.add(ci.item.name);
+      }
+    });
+    return Array.from(names);
+  }, [cart, items]);
 
   if (resolutionStatus === 'loading') {
     return (
@@ -127,6 +203,10 @@ export default function CustomerMenuPage({
     selectedOptions: SelectedOption[],
     notes: string
   ) => {
+    // A live refresh may have 86'd this dish while its modal sat open —
+    // guard the add rather than let a stale snapshot slip into the order.
+    if (!item.is_available) return;
+
     setCart((prevCart) => {
       const existingIdx = prevCart.findIndex(
         (ci) =>
@@ -175,6 +255,20 @@ export default function CustomerMenuPage({
         onSearchChange={setSearchQuery}
       />
 
+      {/* Live Service Status — quiet signal that this menu keeps itself in sync */}
+      <div className="flex items-center justify-center gap-1.5 py-1.5 bg-[#14110E] border-b border-surface-border/70">
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400' : 'bg-stone-600'}`}
+        />
+        <span
+          className={`text-[10px] uppercase tracking-wider font-medium ${
+            isLive ? 'text-emerald-300/90' : 'text-stone-500'
+          }`}
+        >
+          Jonli
+        </span>
+      </div>
+
       {/* Category Nav */}
       <CategoryNav
         categories={categories}
@@ -183,6 +277,28 @@ export default function CustomerMenuPage({
         categoryItemCounts={categoryItemCounts}
         totalItemsCount={items.length}
       />
+
+      {/* Unavailable Cart Notice — never drop a dish silently */}
+      {unavailableCartNames.length > 0 && (
+        <div className="px-4 pt-4 max-w-5xl mx-auto">
+          <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="text-xs leading-relaxed">
+              <p className="font-semibold text-amber-200">
+                Bir nechta taom hozircha mavjud emas
+              </p>
+              <p className="text-amber-200/70 mt-0.5">
+                Savatchangizdagi{' '}
+                <span className="font-medium text-amber-100">
+                  {unavailableCartNames.join(', ')}
+                </span>{' '}
+                hozircha tugagan. Buyurtma berishdan oldin ularni almashtiring yoki
+                savatchadan olib tashlang.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Featured Specialties */}
       {!searchQuery && activeCategoryId === 'all' && (

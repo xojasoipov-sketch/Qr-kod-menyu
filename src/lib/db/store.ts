@@ -11,7 +11,9 @@ import {
   WaiterCall, 
   TableResolution,
   OrderStatus,
-  SelectedOption
+  SelectedOption,
+  UploadRecord,
+  NotificationLog
 } from '@/types/database';
 import { 
   INITIAL_RESTAURANTS, 
@@ -37,6 +39,12 @@ class RestaurantDataStore {
   public orders: Order[] = [...INITIAL_ORDERS];
   public statusHistory: OrderStatusHistory[] = [];
   public waiterCalls: WaiterCall[] = [...INITIAL_WAITER_CALLS];
+
+  /** Xotiradagi fayl ombori: rasm yuklashlar (id -> yozuv + baytlar). */
+  public uploads = new Map<string, { record: UploadRecord; bytes: Buffer }>();
+
+  /** Yuborilgan bildirishnomalar jurnali (eng yangisi birinchi, maksimum 200 ta). */
+  public notifications: NotificationLog[] = [];
 
   private orderSeq = 1045;
 
@@ -122,11 +130,45 @@ class RestaurantDataStore {
     return this.restaurants[idx];
   }
 
-  createStaff(data: Omit<Staff, 'id' | 'user_id' | 'is_active' | 'created_at' | 'updated_at'>): Staff {
+  // --- STAFF (XODIMLAR) ---
+  /**
+   * PIN kod bo'yicha xodimni topadi. Faqat faol (is_active) xodimlar qidiriladi.
+   */
+  getStaffByPin(pin: string): Staff | undefined {
+    const normalized = String(pin ?? '').trim();
+    if (!normalized) return undefined;
+    return this.staff.find((s) => s.is_active && s.pin === normalized);
+  }
+
+  /** Hech kimga biriktirilmagan tasodifiy 4 xonali PIN kod hosil qiladi. */
+  private generateUniquePin(): string {
+    const taken = new Set(this.staff.map((s) => s.pin).filter(Boolean) as string[]);
+    for (let attempt = 0; attempt < 10000; attempt++) {
+      const candidate = String(Math.floor(1000 + Math.random() * 9000));
+      if (!taken.has(candidate)) return candidate;
+    }
+    // Deyarli imkonsiz holat: bo'sh qolgan birinchi kodni ketma-ket qidiramiz.
+    for (let n = 1000; n <= 9999; n++) {
+      const candidate = String(n);
+      if (!taken.has(candidate)) return candidate;
+    }
+    throw new Error('Bo\'sh PIN kod qolmadi.');
+  }
+
+  createStaff(
+    data: Omit<Staff, 'id' | 'user_id' | 'is_active' | 'created_at' | 'updated_at'>
+  ): Staff {
+    const requestedPin = data.pin ? String(data.pin).trim() : '';
+    if (requestedPin && this.staff.some((s) => s.pin === requestedPin)) {
+      throw new Error('Bu PIN kod allaqachon band. Boshqa kod tanlang.');
+    }
+
     const newStaff: Staff = {
       id: `staff-${nanoid(8)}`,
       user_id: `usr-${nanoid(8)}`,
       ...data,
+      phone: data.phone,
+      pin: requestedPin || this.generateUniquePin(),
       is_active: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -491,6 +533,40 @@ class RestaurantDataStore {
 
   getWaiterCalls(branchId: string): WaiterCall[] {
     return this.waiterCalls.filter((c) => c.branch_id === branchId && c.status === 'PENDING');
+  }
+
+  // --- UPLOADS (RASM YUKLASH) ---
+  saveUpload(bytes: Buffer, contentType: string): UploadRecord {
+    const record: UploadRecord = {
+      id: `up-${nanoid(10)}`,
+      content_type: contentType,
+      size: bytes.length,
+      created_at: new Date().toISOString(),
+    };
+    this.uploads.set(record.id, { record, bytes });
+    return record;
+  }
+
+  getUpload(id: string): { record: UploadRecord; bytes: Buffer } | undefined {
+    return this.uploads.get(id);
+  }
+
+  // --- NOTIFICATIONS (BILDIRISHNOMALAR) ---
+  logNotification(entry: Omit<NotificationLog, 'id' | 'created_at'>): NotificationLog {
+    const log: NotificationLog = {
+      id: `ntf-${nanoid(8)}`,
+      ...entry,
+      created_at: new Date().toISOString(),
+    };
+    this.notifications.unshift(log);
+    if (this.notifications.length > 200) {
+      this.notifications.length = 200;
+    }
+    return log;
+  }
+
+  getNotifications(limit = 50): NotificationLog[] {
+    return this.notifications.slice(0, Math.max(0, limit));
   }
 
   // --- ANALYTICS ---
