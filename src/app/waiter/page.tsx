@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import {
   Armchair,
   ArrowLeftRight,
@@ -22,6 +21,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
+import SignOutButton from '@/components/auth/SignOutButton';
 import {
   acceptOrder,
   claimTable,
@@ -862,12 +862,7 @@ export default function WaiterPanelPage() {
               <RefreshCw className="h-3.5 w-3.5" />
             </button>
 
-            <Link
-              href="/"
-              className="px-2 py-1 text-[11px] uppercase tracking-wider text-stone-500 transition-colors hover:text-stone-200"
-            >
-              Chiqish
-            </Link>
+            <SignOutButton className="px-2 py-1 text-[11px] uppercase tracking-wider text-stone-500 transition-colors hover:text-stone-200 disabled:opacity-60" />
           </div>
         </div>
       </header>

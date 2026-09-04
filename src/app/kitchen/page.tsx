@@ -20,7 +20,7 @@ import {
   UserCheck,
   HandPlatter
 } from 'lucide-react';
-import Link from 'next/link';
+import SignOutButton from '@/components/auth/SignOutButton';
 
 const RESTAURANT_ID = 'rest-001';
 
@@ -209,9 +209,7 @@ export default function KitchenDisplaySystemPage() {
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          <Link href="/" className="text-xs text-stone-400 hover:text-white px-2 py-1">
-            Chiqish
-          </Link>
+          <SignOutButton className="text-xs text-stone-400 hover:text-white px-2 py-1 disabled:opacity-60" />
         </div>
       </header>
 

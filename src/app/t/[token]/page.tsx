@@ -12,7 +12,6 @@ import FoodCard from '@/components/customer/FoodCard';
 import ProductDetailModal from '@/components/customer/ProductDetailModal';
 import CartDrawer from '@/components/customer/CartDrawer';
 import { AlertCircle, ConciergeBell, Utensils } from 'lucide-react';
-import Link from 'next/link';
 
 type ResolutionStatus = 'loading' | 'ready' | 'not-found';
 
@@ -171,12 +170,15 @@ export default function CustomerMenuPage({
             Ushbu QR kod (<code className="text-gold-300 font-mono">{token}</code>) muddati tugagan, eskirgan yoki yangisiga almashtirilgan bo&apos;lishi mumkin.
           </p>
           <div className="space-y-2">
-            <Link
-              href="/"
+            {/* Mehmonda "bosh sahifa" yo'q — sayt ildizi xodimlar kirishiga
+                olib boradi. Shuning uchun bu yerda faqat qayta urinish. */}
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
               className="block w-full py-3 px-4 rounded-xl bg-gold-400 text-stone-950 font-bold text-xs tracking-wider uppercase hover:bg-gold-300 transition-colors"
             >
-              Bosh Sahifaga Qaytish
-            </Link>
+              Qaytadan Urinish
+            </button>
             <p className="text-[11px] text-stone-500">
               Iltimos, ofitsiantdan yordam so&apos;rang yoki stoldagi yangi QR kodni skanerlang.
             </p>

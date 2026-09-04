@@ -110,14 +110,20 @@ function requiresStaffApi(pathname: string, method: string): boolean {
 interface PageRule {
   section: string;
   roles: SessionRole[];
-  /** Sessiya bo'lmasa qaysi kirish ekraniga yuborish kerak. */
-  signInPath: '/login' | '/pin';
+  /**
+   * Sessiya bo'lmasa qaysi kirish ekraniga yuborish kerak.
+   *
+   * Kirish endi bitta: `/login` sahifasi ikkala usulni ham (xizmat kodi va
+   * ma'muriyat paroli) o'zida saqlaydi. Bu yerga `?next=` qo'shib yuboriladi —
+   * o'sha sahifa aynan shu parametrga qarab to'g'ri yorliqni ochadi.
+   */
+  signInPath: '/login';
 }
 
 const PAGE_RULES: PageRule[] = [
   { section: '/admin', roles: ['ADMIN'], signInPath: '/login' },
-  { section: '/kitchen', roles: ['KITCHEN', 'ADMIN'], signInPath: '/pin' },
-  { section: '/waiter', roles: ['WAITER', 'ADMIN'], signInPath: '/pin' },
+  { section: '/kitchen', roles: ['KITCHEN', 'ADMIN'], signInPath: '/login' },
+  { section: '/waiter', roles: ['WAITER', 'ADMIN'], signInPath: '/login' },
 ];
 
 // ==========================================
