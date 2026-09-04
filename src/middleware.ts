@@ -58,13 +58,15 @@ function underSection(pathname: string, section: string): boolean {
  * Stolni olish/bo'shatish/uzatish va buyurtmani tasdiqlash/rad etish.
  */
 const WAITER_API_PATTERNS: RegExp[] = [
-  /^\/api\/tables\/[^/]+\/(claim|release|transfer)$/,
+  /^\/api\/tables\/[^/]+\/(claim|release|transfer|guests)$/,
   /^\/api\/orders\/[^/]+\/(accept|reject)$/,
 ];
 
 /** ADMIN yoki WAITER bajara oladigan API so'rovlari. */
 function requiresWaiterApi(pathname: string, method: string): boolean {
-  if (method !== 'POST') return false;
+  // Zal amallarining aksariyati POST (claim/release/transfer/accept/reject); mehmonlar
+  // sonini belgilash esa qisman yangilash bo'lgani uchun PATCH.
+  if (method !== 'POST' && method !== 'PATCH') return false;
   return WAITER_API_PATTERNS.some((pattern) => pattern.test(pathname));
 }
 
