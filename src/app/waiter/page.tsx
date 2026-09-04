@@ -13,11 +13,13 @@ import {
   DoorOpen,
   Filter,
   HandPlatter,
+  Receipt,
   RefreshCw,
   UserCheck,
   UserMinus,
   Volume2,
   VolumeX,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -197,6 +199,10 @@ export default function WaiterPanelPage() {
   const [transferTo, setTransferTo] = useState('');
   const [transferError, setTransferError] = useState<string | null>(null);
 
+  const [billTargetId, setBillTargetId] = useState<string | null>(null);
+  const [guestCountInput, setGuestCountInput] = useState('');
+  const [guestCountError, setGuestCountError] = useState<string | null>(null);
+
   // Nisbiy vaqtlar ("12 daqiqa kutmoqda") o'zi yangilanib tursin.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -296,6 +302,13 @@ export default function WaiterPanelPage() {
     myStaffIdRef.current = myStaffId;
   }, [myStaffId]);
 
+  // `handleRealtimeEvent` shu holatni har chaqirilganda eng so'nggi holatda ko'rishi kerak
+  // (closure eskirib qolmasligi uchun) — myStaffIdRef bilan bir xil naqsh.
+  const tablesRef = useRef(tables);
+  useEffect(() => {
+    tablesRef.current = tables;
+  }, [tables]);
+
   // --- HODISALAR ---
 
   const handleRealtimeEvent = useCallback(
@@ -307,13 +320,20 @@ export default function WaiterPanelPage() {
           if (audioEnabled) soundManager.playWaiterCallAlert();
           refreshAll();
           break;
-        case 'ORDER_CREATED':
-          // Mening stolimdan tushgan yangi buyurtma — tasdiqlash kutmoqda.
-          if (audioEnabled && payload.order?.waiter_id === myStaffIdRef.current) {
+        case 'ORDER_CREATED': {
+          // Mening stolimdan tushgan yangi buyurtma, yoki hali hech kimga biriktirilmagan
+          // stoldan tushgan buyurtma (bunda hamma ofitsiantga ovoz chalinadi — kim birinchi
+          // borsa, o'sha tasdiqlaydi).
+          const orderTable = tablesRef.current.find((t) => t.id === payload.order?.table_id);
+          if (
+            audioEnabled &&
+            (payload.order?.waiter_id === myStaffIdRef.current || !orderTable?.claimed_by)
+          ) {
             soundManager.playKitchenOrderBell();
           }
           refreshAll();
           break;
+        }
         case 'ORDER_STATUS_CHANGED':
           if (payload.newStatus === 'ready' && audioEnabled) {
             soundManager.playOrderReadyChime();
@@ -557,17 +577,49 @@ export default function WaiterPanelPage() {
     }
   }, [transferTarget, transferTo, refreshAll]);
 
+  const openBill = useCallback((table: Table) => {
+    setBillTargetId(table.id);
+    setGuestCountInput(table.guest_count ? String(table.guest_count) : '');
+    setGuestCountError(null);
+  }, []);
+
+  /** "Necha kishi?" o'zgarganda (blur yoki tasdiqlash tugmasi orqali) serverga yuboriladi. */
+  const saveGuestCount = useCallback(
+    (table: Table, rawValue: string) => {
+      const trimmed = rawValue.trim();
+      const guestCount = trimmed === '' ? null : Number(trimmed);
+      if (guestCount !== null && (!Number.isInteger(guestCount) || guestCount < 1)) {
+        setGuestCountError("Mehmonlar soni musbat butun son bo'lishi kerak.");
+        return;
+      }
+      // O'zgarish bo'lmasa — bekorga so'rov yubormaymiz.
+      if ((table.guest_count ?? null) === guestCount) return;
+
+      setGuestCountError(null);
+      void runAction(`guests:${table.id}`, async () => {
+        const res = await fetch(`/api/tables/${encodeURIComponent(table.id)}/guests`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ guest_count: guestCount }),
+        });
+        if (!res.ok) throw new Error(await readError(res));
+      });
+    },
+    [runAction]
+  );
+
   // Modalni Escape bilan yopish.
   useEffect(() => {
-    if (!rejectTarget && !transferTarget) return;
+    if (!rejectTarget && !transferTarget && !billTargetId) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       setRejectTarget(null);
       setTransferTarget(null);
+      setBillTargetId(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [rejectTarget, transferTarget]);
+  }, [rejectTarget, transferTarget, billTargetId]);
 
   // --- HOSILA MA'LUMOTLAR ---
 
@@ -617,7 +669,13 @@ export default function WaiterPanelPage() {
     return counts;
   }, [orders]);
 
-  /** Faqat mening stollarimdan kelgan, hali tasdiqlanmagan buyurtmalar. */
+  const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables]);
+
+  /**
+   * Mening stollarimdan kelgan buyurtmalar VA egasiz stolga (claimed_by yo'q) tushgan
+   * buyurtmalar — bular hali hech kimga ko'rinmasa, hech qaysi ofitsiant ularni tasdiqlay
+   * olmay qoladi. Kim birinchi tasdiqlasa, o'sha xodimga biriktiriladi (server tomonida).
+   */
   const pendingForMe = useMemo(
     () =>
       myStaffId
@@ -625,11 +683,13 @@ export default function WaiterPanelPage() {
             .filter(
               (o) =>
                 o.status === 'pending' &&
-                (myTableIds.has(o.table_id) || o.waiter_id === myStaffId)
+                (myTableIds.has(o.table_id) ||
+                  o.waiter_id === myStaffId ||
+                  !tableById.get(o.table_id)?.claimed_by)
             )
             .sort((a, b) => a.created_at.localeCompare(b.created_at))
         : [],
-    [orders, myTableIds, myStaffId]
+    [orders, myTableIds, myStaffId, tableById]
   );
 
   /*
@@ -679,8 +739,6 @@ export default function WaiterPanelPage() {
     [waiterCalls]
   );
 
-  const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables]);
-
   const transferOptions = useMemo(
     () =>
       colleagues.filter(
@@ -690,6 +748,25 @@ export default function WaiterPanelPage() {
   );
 
   const rejectReasonValid = rejectReason.trim().length >= MIN_REASON_LENGTH;
+
+  const billTarget = useMemo(
+    () => (billTargetId ? tableById.get(billTargetId) ?? null : null),
+    [billTargetId, tableById]
+  );
+
+  /** Shu stolning joriy o'tirishiga tegishli, bekor qilinmagan buyurtmalar — hisob shulardan. */
+  const billOrders = useMemo(() => {
+    if (!billTarget) return [];
+    return orders
+      .filter((o) => o.table_id === billTarget.id && o.status !== 'cancelled')
+      .filter((o) => !billTarget.claimed_at || o.created_at >= billTarget.claimed_at)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [orders, billTarget]);
+
+  const billTotal = useMemo(
+    () => billOrders.reduce((sum, o) => sum + o.total, 0),
+    [billOrders]
+  );
 
   // ==========================================
   // KO'RINISH
@@ -842,6 +919,7 @@ export default function WaiterPanelPage() {
                 const acceptKey = `accept:${order.id}`;
                 const rejectKey = `reject:${order.id}`;
                 const isBusy = Boolean(busy[acceptKey]) || Boolean(busy[rejectKey]);
+                const isUnclaimedTable = !tableById.get(order.table_id)?.claimed_by;
 
                 return (
                   <article
@@ -862,6 +940,13 @@ export default function WaiterPanelPage() {
                         <span className="font-mono">{waitedLabel(order.created_at)}</span>
                       </div>
                     </div>
+
+                    {isUnclaimedTable ? (
+                      <div className="mt-2 inline-flex w-fit items-center gap-1 rounded-full border border-gold-500/40 bg-gold-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-gold-300">
+                        <DoorOpen className="h-3 w-3" />
+                        <span>Stol bo&apos;sh — birinchi boruvchiga</span>
+                      </div>
+                    ) : null}
 
                     <ul className="my-3 divide-y divide-surface-border/60 border-y border-surface-border/60">
                       {order.items.map((item, index) => (
@@ -1123,6 +1208,15 @@ export default function WaiterPanelPage() {
                     </div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openBill(table)}
+                        className={BTN_QUIET}
+                      >
+                        <Receipt className="h-3.5 w-3.5" />
+                        <span>Hisob</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleRelease(table)}
@@ -1491,6 +1585,119 @@ export default function WaiterPanelPage() {
                 <span>
                   {busy[`transfer:${transferTarget.id}`] ? 'Topshirilmoqda...' : 'Topshiraman'}
                 </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* HISOB MODALI */}
+      {billTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Hisob"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-surface-border bg-surface-100 p-5 shadow-luxury">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-gold-500/80">
+                  Hisob
+                </div>
+                <h3 className="mt-1 font-serif text-lg leading-tight text-stone-50">
+                  {tableLabel(billTarget)}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBillTargetId(null)}
+                aria-label="Yopish"
+                className="rounded-lg border border-surface-border bg-surface-200 p-1.5 text-stone-400 transition-colors hover:border-gold-400/45 hover:text-gold-200"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {billOrders.length === 0 ? (
+              <QuietNote>Bu o&apos;tirishda hali buyurtma yo&apos;q.</QuietNote>
+            ) : (
+              <ul className="mt-3 max-h-56 divide-y divide-surface-border/60 overflow-y-auto border-y border-surface-border/60">
+                {billOrders.map((order) =>
+                  order.items.map((item, index) => (
+                    <li
+                      key={item.id || `${order.id}-${index}`}
+                      className="flex items-baseline justify-between gap-3 py-1.5 text-xs text-stone-200"
+                    >
+                      <span>
+                        <span className="mr-1.5 font-mono text-gold-300">{item.quantity}×</span>
+                        {item.name_snapshot}
+                        <span className="ml-1.5 text-[10px] text-stone-600">
+                          {order.order_number}
+                        </span>
+                      </span>
+                      <span className="shrink-0 font-mono text-[11px] text-stone-500">
+                        {formatCurrency(item.total)}
+                      </span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+
+            <div className="mt-3">
+              <FieldRow label="Jami" value={formatCurrency(billTotal)} strong />
+            </div>
+
+            <label
+              htmlFor="bill-guest-count"
+              className="mt-4 block text-[10px] uppercase tracking-wider text-stone-500"
+            >
+              Necha kishi?
+            </label>
+            <input
+              id="bill-guest-count"
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={guestCountInput}
+              onChange={(e) => {
+                setGuestCountInput(e.target.value);
+                if (guestCountError) setGuestCountError(null);
+              }}
+              onBlur={() => saveGuestCount(billTarget, guestCountInput)}
+              placeholder="Masalan: 4"
+              className="mt-1.5 w-full rounded-xl border border-surface-border bg-surface-50 px-3 py-2.5 text-xs text-stone-100 placeholder:text-stone-600 focus:border-gold-400/50 focus:outline-none"
+            />
+
+            {guestCountError ? (
+              <p className="mt-2 text-[11px] text-red-300">{guestCountError}</p>
+            ) : null}
+
+            {Number(guestCountInput) > 0 ? (
+              <div className="mt-3 rounded-xl border border-gold-400/25 bg-gold-400/5 px-3 py-2.5">
+                <FieldRow
+                  label="Har kishiga"
+                  value={formatCurrency(Math.round(billTotal / Number(guestCountInput)))}
+                  strong
+                />
+              </div>
+            ) : null}
+
+            <p className="mt-4 text-[11px] leading-relaxed text-stone-500">
+              Mijoz shu hisobni ko&apos;rib kassaga to&apos;lov qiladi.
+            </p>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setBillTargetId(null)}
+                disabled={Boolean(busy[`guests:${billTarget.id}`])}
+                className={BTN_GOLD}
+              >
+                <Receipt className="h-4 w-4" />
+                <span>{busy[`guests:${billTarget.id}`] ? 'Saqlanmoqda...' : 'Yopish'}</span>
               </button>
             </div>
           </div>

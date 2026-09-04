@@ -986,8 +986,29 @@ export const db = {
     return mapTable(res.rows[0]);
   },
 
-  async updateTable(id: string, updates: Partial<Table>): Promise<Table | null> {
-    return updateTableRow(id, updates);
+  async updateTable(
+    id: string,
+    updates: Omit<Partial<Table>, 'guest_count'> & { guest_count?: number | null }
+  ): Promise<Table | null> {
+    const updated = await updateTableRow(id, updates as Partial<Table>);
+    if (!updated) return null;
+
+    const branchRes = await query<{ restaurant_id: string }>(
+      'SELECT restaurant_id FROM rest_branches WHERE id = $1',
+      [updated.branch_id]
+    );
+
+    eventBus.emit({
+      type: 'TABLE_UPDATED',
+      timestamp: updated.updated_at,
+      restaurant_id: branchRes.rows[0]?.restaurant_id || '',
+      branch_id: updated.branch_id,
+      tableId: updated.id,
+      table: updated,
+      data: { action: 'UPDATED' },
+    });
+
+    return updated;
   },
 
   async updateRestaurant(
@@ -1528,7 +1549,9 @@ export const db = {
    * Shundan keyingina oshxona tayyorlashni boshlay oladi.
    */
   async acceptOrder(orderId: string, staff: { id: string; name: string }): Promise<OrderActionResult> {
-    type TxResult = { ok: true; order: Order } | { ok: false; error: string };
+    type TxResult =
+      | { ok: true; order: Order; claimedTable?: Table; restaurantId?: string }
+      | { ok: false; error: string };
 
     const result = await withTransaction<TxResult>(async (client) => {
       const res = await client.query<OrderRow>('SELECT * FROM rest_orders WHERE id = $1 FOR UPDATE', [
@@ -1547,6 +1570,7 @@ export const db = {
       const prevStatus = row.status;
       // Stolni olgan ofitsiant buyurtmaga biriktirilgan bo'lsa — o'sha saqlanadi;
       // bo'sh bo'lsa — amalni bajargan ofitsiant biriktiriladi.
+      const wasUnassigned = !row.waiter_id;
       const waiterId = row.waiter_id ?? staff.id;
       const waiterName = row.waiter_id ? row.waiter_name : staff.name;
 
@@ -1566,14 +1590,63 @@ export const db = {
         [orderId]
       );
       const order = mapOrder(upd.rows[0], itemsRes.rows.map(mapOrderItem));
-      return { ok: true, order };
+
+      // Bu birinchi tasdiqlash bo'lsa (buyurtma hech kimga biriktirilmagan edi) — stolni ham
+      // shu xodimga olamiz, agar hali hech kim ulgurmagan bo'lsa (poyga holati — bunda stolga
+      // tegilmaydi, buyurtma baribir shu xodimga biriktiriladi, xato tashlanmaydi).
+      let claimedTable: Table | undefined;
+      let restaurantId: string | undefined;
+      if (wasUnassigned) {
+        const tableRes = await client.query<TableRow>(
+          'SELECT * FROM rest_tables WHERE id = $1 FOR UPDATE',
+          [order.table_id]
+        );
+        const tableRow = tableRes.rows[0];
+        if (tableRow && !tableRow.claimed_by) {
+          // claimed_at'ni "hozir" emas, shu stoldagi eng eski bekor qilinmagan buyurtmaning
+          // vaqtiga o'rnatamiz — aks holda (masalan mijoz 10:00da buyurtma bersa-yu, ofitsiant
+          // uni 10:10da tasdiqlasa) "Hisob" paneli aynan shu — o'tirishni boshlagan —
+          // buyurtmani claimed_at'dan oldin deb chetlab o'tib qo'yardi.
+          const earliestRes = await client.query<{ min_created: string }>(
+            `SELECT MIN(created_at) AS min_created FROM rest_orders WHERE table_id = $1 AND status != 'cancelled'`,
+            [tableRow.id]
+          );
+          const claimedAt = earliestRes.rows[0]?.min_created || now;
+          const tableUpd = await client.query<TableRow>(
+            `UPDATE rest_tables SET claimed_by = $1, claimed_by_name = $2, claimed_at = $3, updated_at = $4 WHERE id = $5 RETURNING *`,
+            [staff.id, staff.name, claimedAt, now, tableRow.id]
+          );
+          claimedTable = mapTable(tableUpd.rows[0]);
+          const branchRes = await client.query<{ restaurant_id: string }>(
+            'SELECT restaurant_id FROM rest_branches WHERE id = $1',
+            [claimedTable.branch_id]
+          );
+          restaurantId = branchRes.rows[0]?.restaurant_id;
+        }
+      }
+
+      return { ok: true, order, claimedTable, restaurantId };
     });
 
     if (!result.ok) return result;
 
     emitOrderStaffEvent('ORDER_ACCEPTED', result.order, staff, result.order.updated_at);
 
-    return result;
+    if (result.claimedTable) {
+      eventBus.emit({
+        type: 'TABLE_CLAIMED',
+        timestamp: result.claimedTable.updated_at,
+        restaurant_id: result.restaurantId || result.order.restaurant_id,
+        branch_id: result.claimedTable.branch_id,
+        tableId: result.claimedTable.id,
+        table: result.claimedTable,
+        staffId: staff.id,
+        staffName: staff.name,
+        data: { action: 'CLAIMED' },
+      });
+    }
+
+    return { ok: true, order: result.order };
   },
 
   /**
