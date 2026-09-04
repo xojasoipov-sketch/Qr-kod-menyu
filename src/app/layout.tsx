@@ -2,12 +2,12 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'RESTAURANT QR OS — Modern Dining & Kitchen Operating System',
-  description: 'Production-ready restaurant operating system with mobile QR menu, real-time KDS, waiter dispatch, and SaaS dashboard.',
+  title: 'Muhtasham Restorani',
+  description: "QR kod orqali menyu, buyurtma va zal xizmati — Muhtasham Restorani.",
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Restaurant QR OS',
+    title: 'Muhtasham Restorani',
   },
 };
 
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="uz" className="dark">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
